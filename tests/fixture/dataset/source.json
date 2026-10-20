@@ -1,0 +1,9 @@
+{
+  "masechet": "בדיקה",
+  "id_prefix": "fx",
+  "origin_repo": "https://github.com/example/library",
+  "origin_path": "fixture/library.txt",
+  "origin_commit": "0000000000000000000000000000000000000000",
+  "origin_sha256": "777045d08581cc14f0a130ca45fa416a1c7ae8d4f096443ea596c09cec19fd61",
+  "note": "fixture לבדיקות בלבד"
+}

@@ -1,0 +1,4 @@
+﻿id,query,type,correct_ref,correct_quote,correct_line,near_miss_ref,near_miss_quote,near_miss_line,near_miss_same_amud,split,verified_by_human
+fx-001,באילו ימים קוראים את המגילה,conceptual,"בדיקה ב ע""א","נקראת באחד עשר, בשנים עשר",3,"בדיקה ב ע""ב",קוראין את ההלל ביום,7,לא,test,
+fx-002,איך נקרא שם השם,short,"בדיקה ב ע""ב",מנין שהשם ה' אחד הוא,6,"בדיקה ב ע""ב",קוראין את ההלל ביום,7,כן,test,
+fx-003,על מה אין מעבירין,short,"בדיקה ג ע""א",אין מעבירין על המצוות,9,"בדיקה ב ע""ב",אמר רב: מנין שהשם,6,לא,test,

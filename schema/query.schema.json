@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "שאילתת בדיקה לחיפוש החכם של אוצריא",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id","query","type","correct_ref","correct_quote","correct_line","near_miss_ref","near_miss_quote","near_miss_line","near_miss_same_amud","split","verified_by_human"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^[a-z]+-\\d{3,}$"},
+    "query": {"type": "string", "minLength": 1},
+    "type": {"enum": ["conceptual", "short"]},
+    "correct_ref": {"type": "string", "minLength": 1},
+    "correct_quote": {"type": "string", "minLength": 1},
+    "correct_line": {"type": "string", "pattern": "^\\d+(-\\d+)?$"},
+    "near_miss_ref": {"type": "string", "minLength": 1},
+    "near_miss_quote": {"type": "string", "minLength": 1},
+    "near_miss_line": {"type": "string", "pattern": "^\\d+(-\\d+)?$"},
+    "near_miss_same_amud": {"enum": ["כן", "לא"]},
+    "split": {"enum": ["test", "train"]},
+    "verified_by_human": {"type": "string"}
+  }
+}

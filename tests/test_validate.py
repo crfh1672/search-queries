@@ -1,0 +1,162 @@
+import csv, json, os, shutil, sys, tempfile, unittest
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
+import validate
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+FIXTURE = os.path.join(HERE, "fixture", "dataset")
+with open(os.path.join(HERE, "fixture", "library.txt"), "rb") as _f:
+    LIB = _f.read()
+
+
+class Base(unittest.TestCase):
+    lib = LIB
+
+    def setUp(self):
+        self.tmp = tempfile.mkdtemp()
+        self.d = os.path.join(self.tmp, "fx")
+        shutil.copytree(FIXTURE, self.d)
+
+    def tearDown(self):
+        shutil.rmtree(self.tmp)
+
+    def errs(self, loader=None):
+        return validate.validate_dataset(self.d, loader=loader or (lambda d, m: (self.lib, None)))
+
+    def has(self, text, **kw):
+        return any(text in e for e in self.errs(**kw))
+
+    def load(self):
+        with open(os.path.join(self.d, "queries.jsonl"), encoding="utf-8") as f:
+            return [json.loads(l) for l in f if l.strip()]
+
+    def save(self, rows):
+        with open(os.path.join(self.d, "queries.jsonl"), "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+
+class Valid(Base):
+    def test_fixture_is_valid(self):
+        self.assertEqual(self.errs(), [])
+
+    def test_niqqud_tags_and_divine_name_are_normalised(self):
+        # השורה בספרייה כוללת ניקוד, תגיות ו"יהוה", והציטוט כתוב בלי ניקוד וב"ה'"
+        self.assertEqual(self.errs(), [])
+
+
+class JsonlChecks(Base):
+    def test_broken_json(self):
+        with open(os.path.join(self.d, "queries.jsonl"), "a", encoding="utf-8") as f:
+            f.write("{not json}\n")
+        self.assertTrue(self.has("JSON לא תקין"))
+
+    def test_extra_field(self):
+        rows = self.load(); rows[0]["extra"] = "x"; self.save(rows)
+        self.assertTrue(self.has("שדות מיותרים ['extra']"))
+
+    def test_missing_field(self):
+        rows = self.load(); del rows[0]["split"]; self.save(rows)
+        self.assertTrue(self.has("שדות חסרים ['split']"))
+
+    def test_duplicate_id(self):
+        rows = self.load(); rows[1]["id"] = rows[0]["id"]; self.save(rows)
+        self.assertTrue(self.has("id כפול"))
+
+    def test_line_in_wrong_amud(self):
+        rows = self.load(); rows[0]["correct_line"] = "7"; self.save(rows)
+        self.assertTrue(self.has("אינו בתוך"))
+
+    def test_line_outside_file(self):
+        rows = self.load(); rows[0]["correct_line"] = "999"; self.save(rows)
+        self.assertTrue(self.has("מחוץ לקובץ"))
+
+    def test_quote_not_in_line(self):
+        rows = self.load(); rows[0]["correct_quote"] = "ציטוט שלא קיים בשום מקום"; self.save(rows)
+        self.assertTrue(self.has("לא נמצא בשורה"))
+
+    def test_bad_type_and_split(self):
+        rows = self.load(); rows[0]["type"] = "weird"; rows[0]["split"] = "dev"; self.save(rows)
+        self.assertTrue(self.has("type לא חוקי")); self.assertTrue(self.has("split לא חוקי"))
+
+    def test_empty_required_field(self):
+        rows = self.load(); rows[0]["query"] = ""; self.save(rows)
+        self.assertTrue(self.has("השדה query ריק"))
+
+    def test_ref_for_other_masechet(self):
+        rows = self.load(); rows[0]["correct_ref"] = 'מגילה ב ע"א'; self.save(rows)
+        self.assertTrue(self.has("correct_ref לא תקין"))
+
+    def test_same_amud_flag_inconsistent(self):
+        rows = self.load(); rows[0]["near_miss_same_amud"] = "כן"; self.save(rows)
+        self.assertTrue(self.has("לא עקבי"))
+
+
+class CsvChecks(Base):
+    def _rewrite(self, fn):
+        p = os.path.join(self.d, "queries.csv")
+        with open(p, encoding="utf-8-sig", newline="") as f:
+            rows = list(csv.reader(f))
+        rows = fn(rows)
+        with open(p, "w", encoding="utf-8-sig", newline="") as f:
+            csv.writer(f).writerows(rows)
+
+    def test_extra_column(self):
+        self._rewrite(lambda r: [row + ["x"] for row in r])
+        self.assertTrue(self.has("מיותרות ['x']"))
+
+    def test_missing_column(self):
+        self._rewrite(lambda r: [row[:-1] for row in r])
+        self.assertTrue(self.has("חסרות"))
+
+    def test_row_with_wrong_cell_count(self):
+        self._rewrite(lambda r: r[:2] + [r[2] + ["x"]] + r[3:])
+        self.assertTrue(self.has("עמודות במקום"))
+
+    def test_csv_differs_from_jsonl(self):
+        def f(r):
+            r[1][1] = r[1][1] + " שונה"; return r
+        self._rewrite(f)
+        self.assertTrue(self.has("שונה מה-JSONL"))
+
+    def test_missing_row_in_csv(self):
+        self._rewrite(lambda r: r[:-1])
+        self.assertTrue(self.has("חסר (קיים ב-JSONL)"))
+
+
+class SourceChecks(Base):
+    def test_missing_source_json(self):
+        os.remove(os.path.join(self.d, "source.json"))
+        self.assertTrue(self.has("חסר הקובץ source.json"))
+
+    def test_source_json_extra_key(self):
+        p = os.path.join(self.d, "source.json")
+        with open(p, encoding="utf-8") as f:
+            m = json.load(f)
+        m["oops"] = 1
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(m, f, ensure_ascii=False)
+        self.assertTrue(self.has("source.json: מפתחות לא תקינים"))
+
+    def test_broken_source_json(self):
+        with open(os.path.join(self.d, "source.json"), "w") as f:
+            f.write("{")
+        self.assertTrue(self.has("source.json: JSON לא תקין"))
+
+    def test_commit_must_be_full_sha(self):
+        p = os.path.join(self.d, "source.json")
+        with open(p, encoding="utf-8") as f:
+            m = json.load(f)
+        m["origin_commit"] = "main"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(m, f, ensure_ascii=False)
+        self.assertTrue(self.has("SHA מלא"))
+
+    def test_library_file_changed(self):
+        self.assertTrue(self.has("שונה מ-origin_sha256", loader=lambda d, m: (self.lib + "\nעוד".encode("utf-8"), None)))
+
+    def test_library_unavailable(self):
+        self.assertTrue(self.has("קובץ הספרייה: לא ניתן", loader=lambda d, m: (None, "לא ניתן למשוך")))
+
+
+if __name__ == "__main__":
+    unittest.main()
