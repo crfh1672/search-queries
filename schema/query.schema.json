@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "שאילתת בדיקה לחיפוש החכם של אוצריא",
+  "title": "שאילתת בדיקה לחיפוש חכם",
   "type": "object",
   "additionalProperties": false,
   "required": ["id","query","type","correct_ref","correct_quote","correct_line","near_miss_ref","near_miss_quote","near_miss_line","near_miss_same_amud","split","verified_by_human"],
