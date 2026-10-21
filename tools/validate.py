@@ -40,9 +40,13 @@ def amud_ranges(lines):
         if m:
             # Normalize Hebrew numeral punctuation so refs use letters only
             # (e.g. the heading י״א is referenced as יא).
-            daf = re.sub(r"""["״׳']""", "", m.group(1))
-            if re.fullmatch(r"[א-ת]+", daf):
-                heads.append((i + 1, daf, "א" if m.group(2) == "." else "ב"))
+            raw_daf = m.group(1)
+            daf = re.sub(r"""["״׳']""", "", raw_daf)
+            if not re.fullmatch(r"[א-ת]+", daf):
+                raise ValueError(
+                    f"malformed page heading at source line {i + 1}: {l!r}"
+                )
+            heads.append((i + 1, daf, "א" if m.group(2) == "." else "ב"))
     out = {}
     for k, (ln, daf, amud) in enumerate(heads):
         end = heads[k + 1][0] - 1 if k + 1 < len(heads) else len(lines)
@@ -97,7 +101,11 @@ def validate_dataset(d, loader=None, offline=False):
         err(f"קובץ הספרייה שונה מ-origin_sha256 שב-{f_meta}")
         return errs
     lines = [library.norm(l.rstrip("\r")) for l in data.decode("utf-8").split("\n")]
-    ranges = amud_ranges(lines)
+    try:
+        ranges = amud_ranges(lines)
+    except ValueError as e:
+        err(str(e))
+        return errs
     masechet, prefix = meta["masechet"], meta["id_prefix"]
     if masechet != name:
         err(f"שם התיקייה ({name}) חייב להיות זהה לשם המסכת ב-{f_meta} ({masechet})")
