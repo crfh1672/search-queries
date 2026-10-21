@@ -43,10 +43,35 @@ class MappingTests(unittest.TestCase):
             update_sources.locate_quote(old, new, "old wording", (2, 2), mapping)
 
     def test_ambiguous_quote_requires_review(self):
-        old = ["header", "quote", "other"]
-        new = ["header", "quote", "new", "quote"]
+        old = ["header", "the unique phrase", "other"]
+        # The quote appears as a substring on two changed lines, while the
+        # original line no longer maps exactly to either line.
+        new = ["header", "x unique phrase", "another unique phrase"]
+        mapping = update_sources.line_map(old, new)
         with self.assertRaises(update_sources.UpdateProblem):
-            update_sources.locate_quote(old, new, "quote", (2, 2), {})
+            update_sources.locate_quote(
+                old, new, "unique phrase", (2, 2), mapping
+            )
+
+    def test_overlapping_mapped_citations_require_review(self):
+        row = {"correct_line": "12", "near_miss_line": "12"}
+        with self.assertRaises(update_sources.UpdateProblem):
+            update_sources.ensure_citations_do_not_overlap(row)
+
+    def test_separate_mapped_citations_are_allowed(self):
+        row = {"correct_line": "12", "near_miss_line": "13"}
+        update_sources.ensure_citations_do_not_overlap(row)
+
+    def test_hebrew_numeral_punctuation_is_normalized(self):
+        lines = ["כותרת", "דף י״א.", "קטע", "דף י״א:", "עוד"]
+        self.assertEqual(
+            update_sources.reference_for_line(lines, 3, "בדיקה"),
+            'בדיקה יא ע"א',
+        )
+        self.assertEqual(
+            update_sources.reference_for_line(lines, 5, "בדיקה"),
+            'בדיקה יא ע"ב',
+        )
 
 
 if __name__ == "__main__":
