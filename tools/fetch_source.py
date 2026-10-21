@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """בדיקה אם הקובץ בספריית אוצריא השתנה מאז הקומיט הנעוץ, ואילו שאילתות מושפעות.
 
-    python tools/fetch_source.py taanit             # משווה ל-main
-    python tools/fetch_source.py taanit --ref <sha>  # משווה לקומיט אחר
+    python tools/fetch_source.py תענית             # משווה ל-main
+    python tools/fetch_source.py "מועד קטן" --ref <sha>  # משווה לקומיט אחר
 
 משווים שורה מול שורה אחרי ניקוי (בלי ניקוד, תגיות HTML ושם השם המפורש).
 אם אין הבדל בשורות שהשאילתות נוגעות בהן, אפשר להמשיך לעבוד על הקומיט הנעוץ בלי לשנות כלום.
@@ -19,7 +19,7 @@ def main():
     ap.add_argument("--ref", default="main")
     a = ap.parse_args()
     d = os.path.join("datasets", a.dataset)
-    with open(os.path.join(d, "source.json"), encoding="utf-8") as f:
+    with open(os.path.join(d, a.dataset + ".מקור.json"), encoding="utf-8") as f:
         meta = json.load(f)
     pinned, why = library.get_pinned(a.dataset, meta)
     if why:
@@ -34,7 +34,7 @@ def main():
     diff = [i + 1 for i, (x, y) in enumerate(zip(P, O)) if x != y]
     print(f"שורות שונות: {len(diff)}", diff[:20])
     touched = set()
-    with open(os.path.join(d, "queries.jsonl"), encoding="utf-8") as f:
+    with open(os.path.join(d, a.dataset + ".jsonl"), encoding="utf-8") as f:
         for line in f:
             r = json.loads(line)
             for k in ("correct_line", "near_miss_line"):

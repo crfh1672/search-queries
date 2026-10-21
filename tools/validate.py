@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """בדיקות תקינות לכל מערכי השאילתות ב-datasets/.
 
-כל תיקיית מערך חייבת להכיל:
-    queries.jsonl   המקור לעבודה
-    queries.csv     אותם נתונים לפתיחה באקסל (נגזר מה-JSONL, חייב להיות זהה לו)
-    source.json     שם המסכת, קידומת id, ומקור הטקסט: קומיט קבוע, נתיב ו-sha256 של הקובץ בספריית אוצריא
+שם התיקייה הוא שם המסכת בעברית (למשל datasets/תענית). כל תיקיית מערך חייבת להכיל:
+    <מסכת>.jsonl        המקור לעבודה
+    <מסכת>.csv          אותם נתונים לפתיחה באקסל (נגזר מה-JSONL, חייב להיות זהה לו)
+    <מסכת>.מקור.json    שם המסכת, קידומת id, ומקור הטקסט: קומיט קבוע, נתיב ו-sha256 של הקובץ בספריית אוצריא
 
 הטקסט עצמו לא נשמר במאגר. הבודק מושך אותו מהקומיט הקבוע (או משתמש במטמון ב-.cache/) ובודק מולו.
 
 שימוש:
     python tools/validate.py                  # בודק את כל המערכים
-    python tools/validate.py datasets/taanit  # בודק מערך אחד
+    python tools/validate.py datasets/תענית  # בודק מערך אחד
     python tools/validate.py --offline        # רק מהמטמון, בלי רשת
 קוד יציאה 1 אם נמצאה בעיה.
 """
@@ -61,24 +61,25 @@ def validate_dataset(d, loader=None, offline=False):
     errs = []
     def err(msg): errs.append(f"{d}: {msg}")
 
-    need = ["queries.jsonl", "queries.csv", "source.json"]
-    for n in need:
+    name = os.path.basename(os.path.normpath(d))
+    f_jsonl, f_csv, f_meta = f"{name}.jsonl", f"{name}.csv", f"{name}.מקור.json"
+    for n in (f_jsonl, f_csv, f_meta):
         if not os.path.isfile(os.path.join(d, n)):
             err(f"חסר הקובץ {n}")
     if errs:
         return errs
 
-    # --- source.json ---
+    # --- קובץ המקור (<מסכת>.מקור.json) ---
     try:
-        with open(os.path.join(d, "source.json"), encoding="utf-8") as f:
+        with open(os.path.join(d, f_meta), encoding="utf-8") as f:
             meta = json.load(f)
     except json.JSONDecodeError as e:
-        return [f"{d}/source.json: JSON לא תקין ({e})"]
+        return [f"{d}/{f_meta}: JSON לא תקין ({e})"]
     if set(meta) != META_KEYS:
-        err(f"source.json: מפתחות לא תקינים. חסרים {sorted(META_KEYS - set(meta))}, מיותרים {sorted(set(meta) - META_KEYS)}")
+        err(f"{f_meta}: מפתחות לא תקינים. חסרים {sorted(META_KEYS - set(meta))}, מיותרים {sorted(set(meta) - META_KEYS)}")
         return errs
     if not (isinstance(meta.get("origin_commit"), str) and re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"])):
-        err("source.json: origin_commit חייב להיות SHA מלא של קומיט (40 תווים)")
+        err(f"{f_meta}: origin_commit חייב להיות SHA מלא של קומיט (40 תווים)")
         return errs
     if loader is None:
         slug = os.path.basename(os.path.normpath(d))
@@ -89,45 +90,47 @@ def validate_dataset(d, loader=None, offline=False):
         err(f"קובץ הספרייה: {why}")
         return errs
     if hashlib.sha256(data).hexdigest() != meta["origin_sha256"]:
-        err("קובץ הספרייה שונה מ-origin_sha256 שב-source.json")
+        err(f"קובץ הספרייה שונה מ-origin_sha256 שב-{f_meta}")
         return errs
     lines = [library.norm(l.rstrip("\r")) for l in data.decode("utf-8").split("\n")]
     ranges = amud_ranges(lines)
     masechet, prefix = meta["masechet"], meta["id_prefix"]
+    if masechet != name:
+        err(f"שם התיקייה ({name}) חייב להיות זהה לשם המסכת ב-{f_meta} ({masechet})")
 
     # --- JSONL ---
     rows = []
-    with open(os.path.join(d, "queries.jsonl"), "rb") as f:
+    with open(os.path.join(d, f_jsonl), "rb") as f:
         data = f.read()
     if data.startswith(b"\xef\xbb\xbf"):
-        err("queries.jsonl: אסור BOM")
+        err(f"{f_jsonl}: אסור BOM")
     if data and not data.endswith(b"\n"):
-        err("queries.jsonl: חסר מעבר שורה בסוף הקובץ")
+        err(f"{f_jsonl}: חסר מעבר שורה בסוף הקובץ")
     for n, line in enumerate(data.decode("utf-8-sig").split("\n"), 1):
         if not line.strip():
             continue
         try:
             r = json.loads(line)
         except json.JSONDecodeError as e:
-            err(f"queries.jsonl:{n}: JSON לא תקין ({e})"); continue
+            err(f"{f_jsonl}:{n}: JSON לא תקין ({e})"); continue
         if not isinstance(r, dict):
-            err(f"queries.jsonl:{n}: השורה אינה אובייקט"); continue
+            err(f"{f_jsonl}:{n}: השורה אינה אובייקט"); continue
         if list(r.keys()) != FIELDS:
             missing = [k for k in FIELDS if k not in r]
             extra = [k for k in r if k not in FIELDS]
             if missing or extra:
-                err(f"queries.jsonl:{n}: שדות חסרים {missing}, שדות מיותרים {extra}")
+                err(f"{f_jsonl}:{n}: שדות חסרים {missing}, שדות מיותרים {extra}")
             else:
-                err(f"queries.jsonl:{n}: סדר השדות שונה מהסכמה")
+                err(f"{f_jsonl}:{n}: סדר השדות שונה מהסכמה")
             continue
         r["_n"] = n
         rows.append(r)
     if not rows:
-        err("queries.jsonl ריק")
+        err(f"{f_jsonl} ריק")
 
     seen = set()
     for r in rows:
-        w = f"queries.jsonl:{r['_n']} ({r['id']})"
+        w = f"{f_jsonl}:{r['_n']} ({r['id']})"
         for k in FIELDS:
             if not isinstance(r[k], str):
                 err(f"{w}: השדה {k} חייב להיות מחרוזת")
@@ -169,35 +172,35 @@ def validate_dataset(d, loader=None, offline=False):
             err(f"{w}: near_miss_same_amud לא עקבי עם ה-refs")
 
     # --- CSV ---
-    with open(os.path.join(d, "queries.csv"), encoding="utf-8-sig", newline="") as f:
+    with open(os.path.join(d, f_csv), encoding="utf-8-sig", newline="") as f:
         rd = csv.reader(f)
         try:
             header = next(rd)
         except StopIteration:
-            err("queries.csv ריק"); return errs
+            err(f"{f_csv} ריק"); return errs
         if header != FIELDS:
-            err(f"queries.csv: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
+            err(f"{f_csv}: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
         csv_rows = []
         for i, cells in enumerate(rd, 2):
             if not any(c.strip() for c in cells):
                 continue
             if len(cells) != len(FIELDS):
-                err(f"queries.csv:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
+                err(f"{f_csv}:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
             csv_rows.append(dict(zip(FIELDS, cells)))
     if header == FIELDS:
         by_id = {r["id"]: {k: r[k] for k in FIELDS} for r in rows if "id" in r}
         csv_ids = [r["id"] for r in csv_rows]
         if len(csv_ids) != len(set(csv_ids)):
-            err("queries.csv: id כפולים")
+            err(f"{f_csv}: id כפולים")
         for cid in csv_ids:
-            if cid not in by_id: err(f"queries.csv: ה-id {cid} לא קיים ב-JSONL")
+            if cid not in by_id: err(f"{f_csv}: ה-id {cid} לא קיים ב-JSONL")
         for jid in by_id:
-            if jid not in csv_ids: err(f"queries.csv: ה-id {jid} חסר (קיים ב-JSONL)")
+            if jid not in csv_ids: err(f"{f_csv}: ה-id {jid} חסר (קיים ב-JSONL)")
         for r in csv_rows:
             j = by_id.get(r["id"])
             if j and r != j:
                 diff = [k for k in FIELDS if r[k] != j[k]]
-                err(f"queries.csv: {r['id']} שונה מה-JSONL בשדות {diff}")
+                err(f"{f_csv}: {r['id']} שונה מה-JSONL בשדות {diff}")
     return errs
 
 
@@ -210,8 +213,9 @@ def main(argv):
     all_errs, total = [], 0
     for t in targets:
         e = validate_dataset(t, offline=offline)
-        if os.path.isfile(os.path.join(t, "queries.jsonl")):
-            with open(os.path.join(t, "queries.jsonl"), encoding="utf-8") as f:
+        jp = os.path.join(t, os.path.basename(os.path.normpath(t)) + ".jsonl")
+        if os.path.isfile(jp):
+            with open(jp, encoding="utf-8") as f:
                 total += sum(1 for l in f if l.strip())
         print(f"{'✗' if e else '✓'} {t}  ({len(e)} בעיות)")
         all_errs += e
