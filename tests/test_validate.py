@@ -51,8 +51,17 @@ class Valid(Base):
             "דף י״א:",
             "המשך",
         ])
-        self.assertIn(("יא", "א"), ranges)
-        self.assertIn(("יא", "ב"), ranges)
+        self.assertEqual(ranges[("יא", "א")], (1, 2))
+        self.assertEqual(ranges[("יא", "ב")], (3, 4))
+
+    def test_malformed_page_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed page heading at source line 3"):
+            validate.amud_ranges([
+                "דף א.",
+                "טקסט",
+                'דף ״.',
+                "טקסט שלא צריך להשתייך לדף א",
+            ])
 
 
 class JsonlChecks(Base):
