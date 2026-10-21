@@ -49,8 +49,15 @@ def amud_ranges(lines):
             heads.append((i + 1, daf, "א" if m.group(2) == "." else "ב"))
     out = {}
     for k, (ln, daf, amud) in enumerate(heads):
+        key = (daf, amud)
+        if key in out:
+            previous_line, _ = out[key]
+            raise ValueError(
+                f'duplicate normalized page heading {daf} ע"{amud} '
+                f'at source lines {previous_line} and {ln}'
+            )
         end = heads[k + 1][0] - 1 if k + 1 < len(heads) else len(lines)
-        out[(daf, amud)] = (ln, end)
+        out[key] = (ln, end)
     return out
 
 
