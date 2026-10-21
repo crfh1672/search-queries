@@ -63,6 +63,18 @@ class Valid(Base):
                 "טקסט שלא צריך להשתייך לדף א",
             ])
 
+    def test_duplicate_normalized_page_heading_fails_closed(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            'duplicate normalized page heading יא ע"א at source lines 1 and 3',
+        ):
+            validate.amud_ranges([
+                "דף י״א.",
+                "טקסט",
+                "דף יא.",
+                "המשך",
+            ])
+
 
 class JsonlChecks(Base):
     def test_broken_json(self):
