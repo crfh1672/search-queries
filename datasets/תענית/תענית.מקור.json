@@ -1,9 +1,0 @@
-{
-  "masechet": "תענית",
-  "id_prefix": "taanit",
-  "origin_repo": "https://github.com/Otzaria/otzaria-library",
-  "origin_path": "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר מועד/תענית.txt",
-  "origin_commit": "ee0264f9e511451105c45fc741d41ab30810a618",
-  "origin_sha256": "ddee19d8d2b5821ea6ae8d03aacccc615d30dd43e513d0ed6c8a27dec37f0a47",
-  "note": "מספרי השורות מתייחסים לקובץ הזה בקומיט הנקוב, אחרי הסרת ניקוד ותגיות HTML והחלפת יהוה ב-ה'."
-}

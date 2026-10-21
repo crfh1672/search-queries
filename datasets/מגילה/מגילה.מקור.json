@@ -1,9 +1,0 @@
-{
-  "masechet": "מגילה",
-  "id_prefix": "megillah",
-  "origin_repo": "https://github.com/Otzaria/otzaria-library",
-  "origin_path": "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר מועד/מגילה.txt",
-  "origin_commit": "ee0264f9e511451105c45fc741d41ab30810a618",
-  "origin_sha256": "e7461c22e80efbda547f9fdfaf4789f754c9c02de0d6f65056a884504fefc434",
-  "note": "מספרי השורות מתייחסים לקובץ הזה בקומיט הנקוב, אחרי הסרת ניקוד ותגיות HTML והחלפת יהוה ב-ה'."
-}
