@@ -118,7 +118,7 @@ def reference_for_line(lines: list[str], line_no: int, masechet: str) -> str:
             raw_daf, punctuation = match.groups()
             # Match the repository validator's normalized reference format:
             # Hebrew numeral punctuation (geresh/gershayim) is omitted from refs.
-            daf = re.sub(r'["״׳\\']', "", raw_daf)
+            daf = re.sub(r"""["״׳']""", "", raw_daf)
             if re.fullmatch(r"[א-ת]+", daf):
                 current = (daf, "א" if punctuation == "." else "ב")
             else:
