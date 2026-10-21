@@ -44,6 +44,16 @@ class Valid(Base):
         # השורה בספרייה כוללת ניקוד, תגיות ו"יהוה", והציטוט כתוב בלי ניקוד וב"ה'"
         self.assertEqual(self.errs(), [])
 
+    def test_page_numeral_punctuation_is_normalized(self):
+        ranges = validate.amud_ranges([
+            "דף י״א.",
+            "טקסט",
+            "דף י״א:",
+            "המשך",
+        ])
+        self.assertIn(("יא", "א"), ranges)
+        self.assertIn(("יא", "ב"), ranges)
+
 
 class JsonlChecks(Base):
     def test_broken_json(self):
