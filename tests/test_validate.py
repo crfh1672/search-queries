@@ -92,6 +92,16 @@ class JsonlChecks(Base):
         self.assertTrue(self.has("לא עקבי"))
 
 
+    def test_correct_and_near_miss_share_a_line(self):
+        rows = self.load(); rows[0]["near_miss_line"] = rows[0]["correct_line"]; self.save(rows)
+        self.assertTrue(self.has("באותה שורה"))
+
+    def test_overlapping_line_ranges(self):
+        rows = self.load(); a, _, b = rows[0]["correct_line"].partition("-")
+        rows[0]["near_miss_line"] = f"{a}-{int(b or a) + 1}"; self.save(rows)
+        self.assertTrue(self.has("באותה שורה"))
+
+
 class CsvChecks(Base):
     def _rewrite(self, fn):
         p = os.path.join(self.d, NAME + ".csv")

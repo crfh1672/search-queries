@@ -167,6 +167,11 @@ def validate_dataset(d, loader=None, offline=False):
             q = library.norm(quote)
             if q not in "\n".join(seg) and q not in " ".join(seg):
                 err(f"{w}: הציטוט של {which} לא נמצא בשורה {line_s}")
+        if LINE_RE.match(r["correct_line"]) and LINE_RE.match(r["near_miss_line"]):
+            ca, cb = span(r["correct_line"]); na, nb = span(r["near_miss_line"])
+            if not (cb < na or nb < ca):
+                err(f"{w}: הציטוט הנכון והכמעט נכון נמצאים באותה שורה "
+                    f"({r['correct_line']} / {r['near_miss_line']}). שלילי חייב להיות משורה אחרת")
         same = r["correct_ref"] == r["near_miss_ref"]
         if r["near_miss_same_amud"] in YESNO and (r["near_miss_same_amud"] == "כן") != same:
             err(f"{w}: near_miss_same_amud לא עקבי עם ה-refs")
