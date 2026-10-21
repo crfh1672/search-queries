@@ -1,0 +1,55 @@
+name: Refresh pinned source references
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: update-source-references
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Refresh source references safely
+        env:
+          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+        run: python tools/update_sources.py --ref main --report SOURCE_UPDATE_REPORT.md
+
+      - name: Validate datasets against pinned sources
+        run: python tools/validate.py
+
+      - name: Run repository unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Open or update pull request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          token: \${{ secrets.GITHUB_TOKEN }}
+          branch: automation/update-source-references
+          delete-branch: true
+          commit-message: "chore: refresh pinned source references"
+          title: "chore: refresh pinned source references"
+          body: |
+            Automated source refresh.
+
+            - Updates line numbers and references only when quotations can be mapped unambiguously.
+            - Regenerates CSV from JSONL.
+            - Leaves datasets unchanged and adds SOURCE_UPDATE_REPORT.md when manual review is required.
+            - Runs source validation and unit tests before proposing changes.
+
+            Review any source-content changes before merging.
