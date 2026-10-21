@@ -38,7 +38,11 @@ def amud_ranges(lines):
     for i, l in enumerate(lines):
         m = HEADER_RE.match(l)
         if m:
-            heads.append((i + 1, m.group(1), "א" if m.group(2) == "." else "ב"))
+            # Normalize Hebrew numeral punctuation so refs use letters only
+            # (e.g. the heading י״א is referenced as יא).
+            daf = re.sub(r"""["״׳']""", "", m.group(1))
+            if re.fullmatch(r"[א-ת]+", daf):
+                heads.append((i + 1, daf, "א" if m.group(2) == "." else "ב"))
     out = {}
     for k, (ln, daf, amud) in enumerate(heads):
         end = heads[k + 1][0] - 1 if k + 1 < len(heads) else len(lines)
