@@ -115,9 +115,14 @@ def reference_for_line(lines: list[str], line_no: int, masechet: str) -> str:
             break
         match = HEADER_RE.match(line)
         if match:
-            daf, punctuation = match.groups()
+            raw_daf, punctuation = match.groups()
+            # Match the repository validator's normalized reference format:
+            # Hebrew numeral punctuation (geresh/gershayim) is omitted from refs.
+            daf = re.sub(r'["״׳\\']', "", raw_daf)
             if re.fullmatch(r"[א-ת]+", daf):
                 current = (daf, "א" if punctuation == "." else "ב")
+            else:
+                raise UpdateProblem(f"unrecognized page heading at source line {number}: {line}")
     if current is None:
         raise UpdateProblem(f"no recognizable page heading before line {line_no}")
     daf, amud = current
@@ -133,6 +138,15 @@ def map_citation(row: dict[str, str], prefix: str, old: list[str],
         raise UpdateProblem(f"{prefix} quote crosses a page-side boundary")
     row[line_key] = str(start) if start == end else f"{start}-{end}"
     row[ref_key] = ref
+
+
+def ensure_citations_do_not_overlap(row: dict[str, str]) -> None:
+    correct_start, correct_end = parse_span(row["correct_line"])
+    near_start, near_end = parse_span(row["near_miss_line"])
+    if not (correct_end < near_start or near_end < correct_start):
+        raise UpdateProblem(
+            "correct and near-miss citation spans overlap after source mapping; manual review required"
+        )
 
 
 def repo_slug(url: str) -> str:
@@ -228,6 +242,7 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
         try:
             map_citation(row, "correct", old, new, mapping, name)
             map_citation(row, "near_miss", old, new, mapping, name)
+            ensure_citations_do_not_overlap(row)
             row["near_miss_same_amud"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
             issues.append(f"- {row['id']} ({row['query']}): {exc}")
