@@ -44,7 +44,7 @@ def get_pinned(slug, meta, offline=False):
     except Exception as e:  # noqa: BLE001
         return None, f"לא ניתן למשוך את קובץ הספרייה ({type(e).__name__}: {e})"
     if hashlib.sha256(data).hexdigest() != want:
-        return None, "הקובץ שנמשך מהספרייה שונה מ-origin_sha256 שב-source.json"
+        return None, "הקובץ שנמשך מהספרייה שונה מ-origin_sha256 שבקובץ <מסכת>.מקור.json"
     os.makedirs(CACHE_DIR, exist_ok=True)
     with open(cp, "wb") as f:
         f.write(data)

@@ -3,7 +3,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import validate
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-FIXTURE = os.path.join(HERE, "fixture", "dataset")
+FIXTURE = os.path.join(HERE, "fixture", "בדיקה")
+NAME = "בדיקה"
 with open(os.path.join(HERE, "fixture", "library.txt"), "rb") as _f:
     LIB = _f.read()
 
@@ -13,7 +14,7 @@ class Base(unittest.TestCase):
 
     def setUp(self):
         self.tmp = tempfile.mkdtemp()
-        self.d = os.path.join(self.tmp, "fx")
+        self.d = os.path.join(self.tmp, NAME)
         shutil.copytree(FIXTURE, self.d)
 
     def tearDown(self):
@@ -26,11 +27,11 @@ class Base(unittest.TestCase):
         return any(text in e for e in self.errs(**kw))
 
     def load(self):
-        with open(os.path.join(self.d, "queries.jsonl"), encoding="utf-8") as f:
+        with open(os.path.join(self.d, NAME + ".jsonl"), encoding="utf-8") as f:
             return [json.loads(l) for l in f if l.strip()]
 
     def save(self, rows):
-        with open(os.path.join(self.d, "queries.jsonl"), "w", encoding="utf-8") as f:
+        with open(os.path.join(self.d, NAME + ".jsonl"), "w", encoding="utf-8") as f:
             for r in rows:
                 f.write(json.dumps(r, ensure_ascii=False) + "\n")
 
@@ -46,7 +47,7 @@ class Valid(Base):
 
 class JsonlChecks(Base):
     def test_broken_json(self):
-        with open(os.path.join(self.d, "queries.jsonl"), "a", encoding="utf-8") as f:
+        with open(os.path.join(self.d, NAME + ".jsonl"), "a", encoding="utf-8") as f:
             f.write("{not json}\n")
         self.assertTrue(self.has("JSON לא תקין"))
 
@@ -93,7 +94,7 @@ class JsonlChecks(Base):
 
 class CsvChecks(Base):
     def _rewrite(self, fn):
-        p = os.path.join(self.d, "queries.csv")
+        p = os.path.join(self.d, NAME + ".csv")
         with open(p, encoding="utf-8-sig", newline="") as f:
             rows = list(csv.reader(f))
         rows = fn(rows)
@@ -125,31 +126,39 @@ class CsvChecks(Base):
 
 class SourceChecks(Base):
     def test_missing_source_json(self):
-        os.remove(os.path.join(self.d, "source.json"))
-        self.assertTrue(self.has("חסר הקובץ source.json"))
+        os.remove(os.path.join(self.d, NAME + ".מקור.json"))
+        self.assertTrue(self.has("חסר הקובץ בדיקה.מקור.json"))
 
     def test_source_json_extra_key(self):
-        p = os.path.join(self.d, "source.json")
+        p = os.path.join(self.d, NAME + ".מקור.json")
         with open(p, encoding="utf-8") as f:
             m = json.load(f)
         m["oops"] = 1
         with open(p, "w", encoding="utf-8") as f:
             json.dump(m, f, ensure_ascii=False)
-        self.assertTrue(self.has("source.json: מפתחות לא תקינים"))
+        self.assertTrue(self.has("בדיקה.מקור.json: מפתחות לא תקינים"))
 
     def test_broken_source_json(self):
-        with open(os.path.join(self.d, "source.json"), "w") as f:
+        with open(os.path.join(self.d, NAME + ".מקור.json"), "w") as f:
             f.write("{")
-        self.assertTrue(self.has("source.json: JSON לא תקין"))
+        self.assertTrue(self.has("בדיקה.מקור.json: JSON לא תקין"))
 
     def test_commit_must_be_full_sha(self):
-        p = os.path.join(self.d, "source.json")
+        p = os.path.join(self.d, NAME + ".מקור.json")
         with open(p, encoding="utf-8") as f:
             m = json.load(f)
         m["origin_commit"] = "main"
         with open(p, "w", encoding="utf-8") as f:
             json.dump(m, f, ensure_ascii=False)
         self.assertTrue(self.has("SHA מלא"))
+
+    def test_folder_name_must_match_masechet(self):
+        other = os.path.join(self.tmp, "אחרת")
+        os.makedirs(other)
+        for ext in (".jsonl", ".csv", ".מקור.json"):
+            shutil.copy(os.path.join(self.d, NAME + ext), os.path.join(other, "אחרת" + ext))
+        errs = validate.validate_dataset(other, loader=lambda d, m: (self.lib, None))
+        self.assertTrue(any("חייב להיות זהה לשם המסכת" in e for e in errs))
 
     def test_library_file_changed(self):
         self.assertTrue(self.has("שונה מ-origin_sha256", loader=lambda d, m: (self.lib + "\nעוד".encode("utf-8"), None)))
