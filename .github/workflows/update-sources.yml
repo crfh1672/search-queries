@@ -27,7 +27,7 @@ jobs:
 
       - name: Refresh source references safely
         env:
-          GITHUB_TOKEN: \${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python tools/update_sources.py --ref main --report SOURCE_UPDATE_REPORT.md
 
       - name: Validate datasets against pinned sources
@@ -39,7 +39,7 @@ jobs:
       - name: Open or update pull request
         uses: peter-evans/create-pull-request@v7
         with:
-          token: \${{ secrets.GITHUB_TOKEN }}
+          token: ${{ secrets.GITHUB_TOKEN }}
           branch: automation/update-source-references
           delete-branch: true
           commit-message: "chore: refresh pinned source references"
