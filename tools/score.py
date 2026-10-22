@@ -12,6 +12,7 @@
     python tools/score.py results.csv
 """
 import argparse, csv, glob, json, os, collections, sys
+from pathlib import Path
 
 
 def is_path_link(path):
@@ -51,17 +52,22 @@ def load_data(data_dir="datasets"):
             )
             continue
         try:
+            file_rows = []
+            seen_in_file = set()
             with open(p, encoding="utf-8") as f:
                 for line_number, line in enumerate(f, 1):
                     if line.strip():
                         r = json.loads(line)
                         if not isinstance(r, dict) or not isinstance(r.get("id"), str):
                             raise ValueError(f"{p}:{line_number}: each record must be an object with a string id")
-                        if r["id"] in rows:
-                            raise ValueError(f"duplicate query ID {r['id']!r} across datasets")
-                        rows[r["id"]] = r
+                        if r["id"] in seen_in_file or r["id"] in rows:
+                            raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")
+                        seen_in_file.add(r["id"])
+                        file_rows.append(r)
+            # Add a file only after every row in it passed basic checks.
+            rows.update((r["id"], r) for r in file_rows)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            print(f"Warning: failed to load {p!r}: {exc}", file=sys.stderr)
+            print(f"Warning: failed to load {p!r}; file ignored: {exc}", file=sys.stderr)
     return rows
 
 
