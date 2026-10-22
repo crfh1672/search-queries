@@ -168,6 +168,8 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         if r["type"] not in TYPES: err(f"{w}: type לא חוקי ({r['type']})")
         if r["split"] not in SPLITS: err(f"{w}: split לא חוקי ({r['split']})")
         if r["near_miss_same_section"] not in YESNO: err(f"{w}: near_miss_same_section חייב להיות כן/לא")
+        if require_verified and not r["verified_by_human"].strip():
+            err(f"{w}: מערך מאושר חייב לכלול verified_by_human")
         if r["correct_quote"] == r["near_miss_quote"]:
             err(f"{w}: הציטוט הנכון והכמעט נכון זהים")
         for which in ("correct", "near_miss"):
