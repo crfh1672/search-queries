@@ -16,7 +16,7 @@ import argparse, csv, glob, json, os, collections
 
 def load_data(data_dir="datasets"):
     rows = {}
-    for p in glob.glob(os.path.join(data_dir, "*", "*.jsonl")):
+    for p in glob.glob(os.path.join(data_dir, "**", "*.jsonl"), recursive=True):
         with open(p, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
