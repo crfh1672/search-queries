@@ -18,11 +18,11 @@ def heading(line: str) -> tuple[int, str] | None:
     """Return (level, visible title); excluded headings do not change the TOC path."""
     match = HTML_HEADING_START_RE.match(line)
     if match:
+        if ">" not in line[:match.end() + 1]:
+            raise ValueError("unterminated HTML heading tag")
         attrs = match.group(2)
         if TOC_EXCLUDE_RE.search(attrs):
             return None
-        if ">" not in line[:match.end() + 1] and not line.lstrip().startswith(tuple(f"<h{i}>" for i in range(1, 7))):
-            raise ValueError("unterminated HTML heading tag")
         level = int(match.group(1))
         # Otzaria's parser extracts the complete line's text after stripping markup.
         title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", line)).strip()
