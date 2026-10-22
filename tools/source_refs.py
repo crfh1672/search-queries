@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import re
 
-import library
-
 HTML_HEADING_START_RE = re.compile(r"^\s*<h([1-6])\b([^>]*)", re.IGNORECASE)
 TOC_EXCLUDE_RE = re.compile(r'\bdata-toc\s*=\s*["\']none["\']', re.IGNORECASE)
 MARKDOWN_HEADING_RE = re.compile(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$")
@@ -25,7 +23,7 @@ def heading(line: str) -> tuple[int, str] | None:
             return None
         level = int(match.group(1))
         # Otzaria's parser extracts the complete line's text after stripping markup.
-        title = library.norm(line)
+        title = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", line)).strip()
         if not title:
             raise ValueError("empty heading")
         return level, title
@@ -34,7 +32,7 @@ def heading(line: str) -> tuple[int, str] | None:
     match = MARKDOWN_HEADING_RE.match(line)
     if match:
         level = len(match.group(1))
-        title_text = library.norm(match.group(2))
+        title_text = " ".join(match.group(2).split())
         if not title_text:
             raise ValueError("empty heading")
         return level, ("#" * level) + " " + title_text
@@ -64,7 +62,10 @@ def line_references(lines: list[str]) -> list[str]:
             for old_level in [key for key in stack if key >= level]:
                 del stack[old_level]
 
-            parent_path = stack.get(level - 1)
+            # Preserve the nearest open ancestor even if the source skips a
+            # heading level (for example h2 followed by h4).
+            parent_level = max((key for key in stack if key < level), default=None)
+            parent_path = stack[parent_level] if parent_level is not None else None
             path = (parent_path + (title,)) if parent_path else (title,)
             stack[level] = path
             references.append(" > ".join(path))
