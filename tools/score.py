@@ -116,9 +116,40 @@ def main():
         ap.error(f"לא ניתן לקרוא את קובץ התוצאות: {exc}")
     if not rows:
         ap.error("קובץ התוצאות ריק או מכיל כותרת בלבד; אין מה למדוד")
+    if not data:
+        ap.error("אין מערכי נתונים קנוניים להשוואת קובץ התוצאות")
+    missing_columns = [field for field in ("id", "type", "query") if field not in fieldnames]
+    if missing_columns:
+        ap.error(f"קובץ התוצאות חסר עמודות נדרשות: {missing_columns}")
     modes = [c for c in fieldnames if c.endswith("_rank")]
     if not modes:
         ap.error("לא נמצאו עמודות דירוג בשמות המסתיימים ב-_rank")
+
+    seen_ids = set()
+    result_ids = []
+    for row_number, row in enumerate(rows, 2):
+        query_id = row.get("id")
+        if not query_id:
+            ap.error(f"ID חסר או ריק בשורת תוצאות {row_number}")
+        if query_id in seen_ids:
+            ap.error(f"ID כפול בקובץ התוצאות: {query_id!r}")
+        seen_ids.add(query_id)
+        result_ids.append(query_id)
+        if query_id not in data:
+            ap.error(f"ID לא מוכר בקובץ התוצאות: {query_id!r}")
+            continue
+        canonical = data[query_id]
+        for field in ("type", "query"):
+            if row.get(field) != canonical.get(field):
+                ap.error(
+                    f"השדה {field} של {query_id!r} אינו תואם למערך הקנוני"
+                )
+        measured_value = row.get("measured", "1")
+        if measured_value not in {"0", "1"}:
+            ap.error(f"measured חייב להיות 0 או 1 (שורה {row_number})")
+    missing_ids = sorted(set(data) - seen_ids)
+    if missing_ids:
+        ap.error(f"קובץ התוצאות חסרים בו מזהי שאילתות: {missing_ids[:20]}")
     measured = [r for r in rows if r.get("measured", "1") != "0"]
     if not measured:
         ap.error("כל השורות הוחרגו מהמדידה; אין מה לחשב")
