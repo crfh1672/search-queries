@@ -41,18 +41,18 @@ def heading(line: str) -> tuple[int, str] | None:
     return None
 
 
-def line_reference_data(lines: list[str]) -> tuple[list[str], list[int]]:
+def line_reference_data(lines: list[str]) -> tuple[list[str], list[tuple]]:
     """Return visible heading paths and stable section IDs for every source line.
 
     Section IDs disambiguate repeated headings with the same visible path. They
     are internal validation aids; the stored reference remains human-readable.
     """
     stack: dict[int, tuple[str, ...]] = {}
-    section_stack: dict[int, int] = {}
+    section_stack: dict[int, tuple] = {}
     references: list[str] = []
-    section_ids: list[int] = []
-    root_section_id = 0
-    next_section_id = 0
+    section_ids: list[tuple] = []
+    root_section_id: tuple = ("opening",)
+    occurrence_counts: dict[tuple, int] = {}
 
     for number, line in enumerate(lines, 1):
         try:
@@ -67,8 +67,9 @@ def line_reference_data(lines: list[str]) -> tuple[list[str], list[int]]:
             if level == 1:
                 stack.clear()
                 section_stack.clear()
-                next_section_id += 1
-                root_section_id = next_section_id
+                base_key = ("h1", title)
+                occurrence_counts[base_key] = occurrence_counts.get(base_key, 0) + 1
+                root_section_id = base_key + (occurrence_counts[base_key],)
                 references.append("פתיחת הספר")
                 section_ids.append(root_section_id)
                 continue
@@ -81,12 +82,15 @@ def line_reference_data(lines: list[str]) -> tuple[list[str], list[int]]:
             # heading level (for example h2 followed by h4).
             parent_level = max((key for key in stack if key < level), default=None)
             parent_path = stack[parent_level] if parent_level is not None else None
+            parent_section = section_stack[parent_level] if parent_level is not None else root_section_id
             path = (parent_path + (title,)) if parent_path else (title,)
-            next_section_id += 1
+            base_key = (parent_section, level, title)
+            occurrence_counts[base_key] = occurrence_counts.get(base_key, 0) + 1
+            section_key = base_key + (occurrence_counts[base_key],)
             stack[level] = path
-            section_stack[level] = next_section_id
+            section_stack[level] = section_key
             references.append(" > ".join(path))
-            section_ids.append(next_section_id)
+            section_ids.append(section_key)
             continue
 
         if stack:
@@ -105,7 +109,7 @@ def line_references(lines: list[str]) -> list[str]:
     return line_reference_data(lines)[0]
 
 
-def line_section_ids(lines: list[str]) -> list[int]:
+def line_section_ids(lines: list[str]) -> list[tuple]:
     """Return internal section-boundary IDs for every physical source line."""
     return line_reference_data(lines)[1]
 
@@ -121,7 +125,7 @@ def span_reference(
     references: list[str],
     start: int,
     end: int,
-    section_ids: list[int] | None = None,
+    section_ids: list[tuple] | None = None,
 ) -> str:
     """Require a citation span to remain within one path and, if supplied, one section."""
     if start < 1 or end < start or end > len(references):
