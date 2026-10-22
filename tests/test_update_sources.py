@@ -63,6 +63,7 @@ class MappingTests(unittest.TestCase):
         update_sources.ensure_citations_do_not_overlap(row)
 
     def test_heading_path_reference_is_derived_from_nested_toc(self):
+        # A heading excluded from Otzaria's TOC must not become a citation section.
         lines = [
             "<h1>כתר ראש</h1>",
             "<h2>הלכות ציצית</h2>",
