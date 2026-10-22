@@ -71,7 +71,7 @@ def line_references(lines: list[str]) -> list[str]:
             continue
 
         if stack:
-            references.append(stack[max(stack)])
+            references.append(" > ".join(stack[max(stack)]))
         else:
             references.append("פתיחת הספר")
 
