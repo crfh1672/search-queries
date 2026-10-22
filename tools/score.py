@@ -66,8 +66,33 @@ def load_data(data_dir="datasets"):
                             )
                         if any(not isinstance(r[key], str) for key in validate.FIELDS):
                             raise ValueError(f"{p}:{line_number}: all query fields must be strings")
-                        if not r["id"] or not r["query"] or r["type"] not in {"short", "conceptual"}:
-                            raise ValueError(f"{p}:{line_number}: id/query/type is empty or invalid")
+                        if any(
+                            not r[key].strip() and key not in validate.OPTIONAL_EMPTY
+                            for key in validate.FIELDS
+                        ):
+                            raise ValueError(f"{p}:{line_number}: a required query field is empty")
+                        if not validate.ID_RE.fullmatch(r["id"]):
+                            raise ValueError(f"{p}:{line_number}: invalid query ID {r['id']!r}")
+                        if r["type"] not in validate.TYPES:
+                            raise ValueError(f"{p}:{line_number}: invalid query type {r['type']!r}")
+                        if r["split"] not in validate.SPLITS:
+                            raise ValueError(f"{p}:{line_number}: invalid split {r['split']!r}")
+                        if r["near_miss_same_section"] not in validate.YESNO:
+                            raise ValueError(f"{p}:{line_number}: invalid near-miss section flag")
+                        if r["verified_by_human"] == "":
+                            raise ValueError(f"{p}:{line_number}: approved dataset lacks human verification")
+                        if r["correct_quote"] == r["near_miss_quote"]:
+                            raise ValueError(f"{p}:{line_number}: correct and near-miss quotes are identical")
+                        try:
+                            correct_start, correct_end = validate.span(r["correct_line"])
+                            near_start, near_end = validate.span(r["near_miss_line"])
+                        except ValueError as exc:
+                            raise ValueError(f"{p}:{line_number}: invalid citation range: {exc}") from exc
+                        if not (correct_end < near_start or near_end < correct_start):
+                            raise ValueError(f"{p}:{line_number}: citation ranges overlap")
+                        same_ref = r["correct_ref"] == r["near_miss_ref"]
+                        if (r["near_miss_same_section"] == "כן") != same_ref:
+                            raise ValueError(f"{p}:{line_number}: near-miss section flag disagrees with references")
                         if r["id"] in seen_in_file or r["id"] in rows:
                             raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")
                         seen_in_file.add(r["id"])
