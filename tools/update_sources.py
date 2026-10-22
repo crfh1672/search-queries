@@ -7,9 +7,11 @@ import bisect
 import csv
 import difflib
 import hashlib
+import io
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 import urllib.parse
@@ -236,7 +238,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
     reject_symlink_tree(directory)
     jsonl_text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
 
-    csv_buffer = __import__("io").StringIO(newline="")
+    csv_buffer = io.StringIO(newline="")
     writer = csv.DictWriter(csv_buffer, fieldnames=FIELDS, lineterminator="\r\n")
     writer.writeheader()
     writer.writerows(rows)
@@ -258,7 +260,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
             if is_path_link(target):
                 raise UpdateProblem(f"refusing to replace symlink/junction: {target}")
             info = target.lstat()
-            if not os.path.isfile(target) or not __import__("stat").S_ISREG(info.st_mode):
+            if not os.path.isfile(target) or not stat.S_ISREG(info.st_mode):
                 raise UpdateProblem(f"required output is not a regular file: {target}")
             fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
             try:
