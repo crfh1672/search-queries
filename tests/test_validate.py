@@ -153,7 +153,7 @@ class JsonlChecks(Base):
         self.assertTrue(self.has("ריק אחרי נירמול"))
 
     def test_line_range_with_trailing_newline_is_rejected(self):
-        rows = self.load(); rows[0]["correct_line"] = rows[0]["correct_line"] + "\\n"; self.save(rows)
+        rows = self.load(); rows[0]["correct_line"] = rows[0]["correct_line"] + "\n"; self.save(rows)
         self.assertTrue(self.has("correct_line לא תקין"))
 
     def test_extremely_long_line_number_is_reported_not_crashed(self):
