@@ -45,11 +45,20 @@ class ScoreInputTests(unittest.TestCase):
                 '{"id":"book-001","type":"short","query":"valid"}\nnot-json\n',
                 encoding="utf-8",
             )
-            stderr = io.StringIO()
-            with contextlib.redirect_stderr(stderr):
-                rows = score.load_data(temp)
-            self.assertEqual(rows, {})
-            self.assertIn("file ignored", stderr.getvalue())
+            with self.assertRaisesRegex(ValueError, "canonical dataset file"):
+                score.load_data(temp)
+
+    def test_loader_fails_on_duplicate_ids_across_canonical_files(self):
+        with tempfile.TemporaryDirectory() as temp:
+            for category, book in (("הלכה", "ספר א"), ("מדרש", "ספר ב")):
+                directory = Path(temp) / category / book
+                directory.mkdir(parents=True)
+                (directory / f"{book}.jsonl").write_text(
+                    '{"id":"duplicate-001","type":"short","query":"q"}\\n',
+                    encoding="utf-8",
+                )
+            with self.assertRaisesRegex(ValueError, "duplicate query ID"):
+                score.load_data(temp)
 
     def test_loader_refuses_symlinked_data_root(self):
         with tempfile.TemporaryDirectory() as temp:
