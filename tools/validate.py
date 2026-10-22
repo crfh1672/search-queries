@@ -54,9 +54,22 @@ def is_path_link(path):
     return bool(is_junction and is_junction())
 
 
-def span(s):
-    a, _, b = s.partition("-")
-    return int(a), int(b or a)
+def span(s, max_line=None):
+    match = LINE_RE.fullmatch(s)
+    if not match:
+        raise ValueError(f"invalid line range {s!r}")
+    first = match.group(0).partition("-")[0]
+    last = match.group(0).partition("-")[2] or first
+    # Reject absurdly long integers before int() can raise the interpreter's
+    # digit-limit exception; no valid source can have more than max_line lines.
+    if max_line is not None:
+        limit = len(str(max_line))
+        if len(first) > limit or len(last) > limit:
+            raise ValueError(f"line range {s!r} exceeds source length")
+    a, b = int(first), int(last)
+    if a < 1 or b < a:
+        raise ValueError(f"invalid line range {s!r}")
+    return a, b
 
 
 def validate_dataset(d, loader=None, offline=False, require_verified=None):
@@ -165,8 +178,12 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
 
     # --- JSONL ---
     rows = []
-    with open(os.path.join(d, f_jsonl), "rb") as f:
-        data = f.read()
+    try:
+        with open(os.path.join(d, f_jsonl), "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        err(f"{f_jsonl}: לא ניתן לקרוא את הקובץ ({exc})")
+        return errs
     if data.startswith(b"\xef\xbb\xbf"):
         err(f"{f_jsonl}: אסור BOM")
     if data and not data.endswith(b"\n"):
@@ -222,10 +239,13 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
             err(f"{w}: הציטוט הנכון והכמעט נכון זהים")
         for which in ("correct", "near_miss"):
             ref, line_s, quote = r[f"{which}_ref"], r[f"{which}_line"], r[f"{which}_quote"]
-            if not LINE_RE.match(line_s):
+            if not LINE_RE.fullmatch(line_s):
                 err(f"{w}: {which}_line לא תקין ({line_s})"); continue
-            a, b = span(line_s)
-            if a < 1 or b > len(lines) or a > b:
+            try:
+                a, b = span(line_s, len(lines))
+            except ValueError as exc:
+                err(f"{w}: {which}_line לא תקין ({exc})"); continue
+            if b > len(lines):
                 err(f"{w}: {which}_line מחוץ לקובץ ({line_s})"); continue
             expected_ref = refs[a - 1]
             if ref != expected_ref:
@@ -242,10 +262,18 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
                 err(f"{w}: {which}_line {line_s} חוצה גבול כותרת בשורה {crossed}")
             seg = lines[a - 1:b]
             q = library.norm(quote)
+            if not q:
+                err(f"{w}: הציטוט של {which} ריק אחרי נירמול")
+                continue
             if q not in "\n".join(seg) and q not in " ".join(seg):
                 err(f"{w}: הציטוט של {which} לא נמצא בשורה {line_s}")
-        if LINE_RE.match(r["correct_line"]) and LINE_RE.match(r["near_miss_line"]):
-            ca, cb = span(r["correct_line"]); na, nb = span(r["near_miss_line"])
+        if LINE_RE.fullmatch(r["correct_line"]) and LINE_RE.fullmatch(r["near_miss_line"]):
+            try:
+                ca, cb = span(r["correct_line"], len(lines))
+                na, nb = span(r["near_miss_line"], len(lines))
+            except ValueError:
+                # The per-citation loop already reports malformed/oversized ranges.
+                continue
             if not (cb < na or nb < ca):
                 err(f"{w}: הציטוט הנכון והכמעט נכון נמצאים באותה שורה "
                     f"({r['correct_line']} / {r['near_miss_line']}). שלילי חייב להיות משורה אחרת")
