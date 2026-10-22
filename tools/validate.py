@@ -67,7 +67,9 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     try:
         with open(os.path.join(d, f_meta), encoding="utf-8") as f:
             meta = json.load(f)
-    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+    except json.JSONDecodeError as e:
+        return [f"{d}/{f_meta}: JSON לא תקין ({e})"]
+    except (UnicodeDecodeError, OSError) as e:
         return [f"{d}/{f_meta}: לא ניתן לקרוא JSON תקין ({e})"]
     if not isinstance(meta, dict):
         return [f"{d}/{f_meta}: המטא־נתונים חייבים להיות אובייקט JSON"]
