@@ -31,12 +31,15 @@ def heading(line: str) -> tuple[int, str] | None:
         return level, title
 
     # Markdown headings are recognized by Otzaria, though markup is visible there.
-    match = MARKDOWN_HEADING_RE.match(line)
-    if match:
+    marker = re.match(r"^\\s*(#{1,6})(?:\\s|$)", line)
+    if marker:
+        match = MARKDOWN_HEADING_RE.match(line)
+        if not match:
+            raise ValueError("empty or malformed Markdown heading")
         level = len(match.group(1))
         title_text = " ".join(match.group(2).split())
         if not title_text:
-            raise ValueError("empty heading")
+            raise ValueError("empty Markdown heading")
         return level, ("#" * level) + " " + title_text
     return None
 
