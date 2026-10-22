@@ -260,6 +260,14 @@ class SourceChecks(Base):
         os.makedirs(target)
         self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
 
+    def test_dataset_discovery_reports_misplaced_book_folder_with_jsonl(self):
+        root = os.path.join(self.tmp, "datasets")
+        target = os.path.join(root, "ספר שהונח ברמה שגויה")
+        os.makedirs(target)
+        with open(os.path.join(target, "ספר שהונח ברמה שגויה.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("{}\\n")
+        self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
+
 
 
 if __name__ == "__main__":
