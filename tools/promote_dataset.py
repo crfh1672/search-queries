@@ -397,8 +397,20 @@ def main() -> int:
         meta_path = staged / f"{staged.name}.מקור.json"
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if not isinstance(meta, dict):
+                raise ValueError("source metadata must be a JSON object")
+            if meta.get("source_category") != source.parent.name:
+                raise ValueError(
+                    f"draft folder category {source.parent.name!r} does not match "
+                    f"metadata source_category {meta.get('source_category')!r}"
+                )
+            if meta.get("book_name") != source.name:
+                raise ValueError(
+                    f"draft folder name {source.name!r} does not match "
+                    f"metadata book_name {meta.get('book_name')!r}"
+                )
             destination = REPO_ROOT / "datasets" / meta["source_category"] / meta["book_name"]
-        except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             print(f"לא ניתן לקבוע יעד תקין למערך: {exc}", file=sys.stderr)
             return 1
 
