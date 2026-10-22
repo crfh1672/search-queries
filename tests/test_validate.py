@@ -44,6 +44,37 @@ class Valid(Base):
         # השורה בספרייה כוללת ניקוד, תגיות ו"יהוה", והציטוט כתוב בלי ניקוד וב"ה'"
         self.assertEqual(self.errs(), [])
 
+    def test_page_numeral_punctuation_is_normalized(self):
+        ranges = validate.amud_ranges([
+            "דף י״א.",
+            "טקסט",
+            "דף י״א:",
+            "המשך",
+        ])
+        self.assertEqual(ranges[("יא", "א")], (1, 2))
+        self.assertEqual(ranges[("יא", "ב")], (3, 4))
+
+    def test_malformed_page_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed page heading at source line 3"):
+            validate.amud_ranges([
+                "דף א.",
+                "טקסט",
+                'דף ״.',
+                "טקסט שלא צריך להשתייך לדף א",
+            ])
+
+    def test_duplicate_normalized_page_heading_fails_closed(self):
+        with self.assertRaisesRegex(
+            ValueError,
+            'duplicate normalized page heading יא ע"א at source lines 1 and 3',
+        ):
+            validate.amud_ranges([
+                "דף י״א.",
+                "טקסט",
+                "דף יא.",
+                "המשך",
+            ])
+
 
 class JsonlChecks(Base):
     def test_broken_json(self):
