@@ -281,8 +281,7 @@ class SourceChecks(Base):
         os.makedirs(category)
         os.makedirs(outside)
         with open(os.path.join(outside, "ספר.jsonl"), "w", encoding="utf-8") as handle:
-            handle.write("{}
-")
+            handle.write("{}\n")
         link = os.path.join(category, "ספר")
         try:
             os.symlink(outside, link, target_is_directory=True)
