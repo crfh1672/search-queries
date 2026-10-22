@@ -69,6 +69,18 @@ class Valid(Base):
                 "טקסט",
             ])
 
+    def test_toc_excluded_heading_does_not_replace_reference(self):
+        refs = source_refs.line_references([
+            "<h1>כתר ראש</h1>",
+            "<h2>הלכות ציצית</h2>",
+            "טקסט",
+            '<h2 data-toc="none">כותרת משנית</h2>',
+            "המשך",
+        ])
+        self.assertEqual(refs[4], "הלכות ציצית")
+        self.assertEqual(refs[5], "הלכות ציצית")
+
+
 
 class JsonlChecks(Base):
     def test_broken_json(self):
@@ -200,6 +212,31 @@ class SourceChecks(Base):
 
     def test_library_unavailable(self):
         self.assertTrue(self.has("קובץ הספרייה: לא ניתן", loader=lambda d, m: (None, "לא ניתן למשוך")))
+
+    def test_only_otzaria_sources_are_accepted(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_repo"] = "https://github.com/example/library"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("origin_repo must be https://github.com/Otzaria/otzaria-library"))
+
+    def test_source_category_must_match_library_path(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["source_category"] = "תלמוד בבלי"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("does not match the library path category"))
+
+    def test_approved_dataset_requires_human_verification(self):
+        errs = validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), require_verified=True
+        )
+        self.assertTrue(any("מערך מאושר חייב לכלול verified_by_human" in e for e in errs))
+
 
 
 if __name__ == "__main__":
