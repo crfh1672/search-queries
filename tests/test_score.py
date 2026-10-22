@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 sys.path.insert(0, os.path.abspath(TOOLS))
@@ -13,6 +14,64 @@ import score
 
 
 class ScoreInputTests(unittest.TestCase):
+    def test_score_rejects_results_without_rows(self):
+        with tempfile.TemporaryDirectory() as temp:
+            results = Path(temp) / "results.csv"
+            results.write_text("id,type,query,smart_rank,lexical_rank\\n", encoding="utf-8")
+            with patch.object(sys, "argv", ["score.py", str(results)]):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as cm:
+                        score.main()
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_score_rejects_zero_rank_instead_of_dividing_by_zero(self):
+        with tempfile.TemporaryDirectory() as temp:
+            results = Path(temp) / "results.csv"
+            results.write_text(
+                "id,type,query,smart_rank,lexical_rank\\nbook-001,short,q,0,1\\n",
+                encoding="utf-8",
+            )
+            with patch.object(sys, "argv", ["score.py", str(results)]):
+                with contextlib.redirect_stderr(io.StringIO()):
+                    with self.assertRaises(SystemExit) as cm:
+                        score.main()
+            self.assertEqual(cm.exception.code, 2)
+
+    def test_loader_ignores_entire_file_when_a_later_row_is_invalid(self):
+        with tempfile.TemporaryDirectory() as temp:
+            book = Path(temp) / "הלכה" / "ספר"
+            book.mkdir(parents=True)
+            (book / "ספר.jsonl").write_text(
+                '{"id":"book-001","type":"short","query":"valid"}\\nnot-json\\n',
+                encoding="utf-8",
+            )
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rows = score.load_data(temp)
+            self.assertEqual(rows, {})
+            self.assertIn("file ignored", stderr.getvalue())
+
+    def test_loader_refuses_symlinked_data_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            actual = Path(temp) / "actual"
+            actual.mkdir()
+            category = actual / "הלכה" / "ספר"
+            category.mkdir(parents=True)
+            (category / "ספר.jsonl").write_text(
+                '{"id":"book-001","type":"short","query":"query"}\\n',
+                encoding="utf-8",
+            )
+            link = Path(temp) / "linked"
+            try:
+                link.symlink_to(actual, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rows = score.load_data(str(link))
+            self.assertEqual(rows, {})
+            self.assertIn("refusing to read", stderr.getvalue())
+
     def test_loads_canonical_file_and_warns_about_misnamed_jsonl(self):
         with tempfile.TemporaryDirectory() as temp:
             book = Path(temp) / "הלכה" / "ספר"
