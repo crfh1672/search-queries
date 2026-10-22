@@ -121,6 +121,20 @@ class MappingTests(unittest.TestCase):
                 update_sources.line_map(lines, lines), "book", refs, section_ids,
             )
 
+    def test_updater_rejects_symlinked_dataset_contents(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            dataset = root / "dataset"
+            dataset.mkdir()
+            outside = root / "outside.txt"
+            outside.write_text("outside", encoding="utf-8")
+            try:
+                (dataset / "linked.txt").symlink_to(outside)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"file symlink is unavailable: {exc}")
+            with self.assertRaisesRegex(update_sources.UpdateProblem, "symlink או junction"):
+                update_sources.reject_symlink_tree(dataset)
+
     def test_read_rows_rejects_duplicate_json_keys(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "book.jsonl"
