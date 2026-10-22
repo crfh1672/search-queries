@@ -1,6 +1,7 @@
 import csv
 import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -41,8 +42,7 @@ class JsonlToCsvTests(unittest.TestCase):
             self.assertEqual(result, 0)
             with destination.open(encoding="utf-8-sig", newline="") as handle:
                 rows = list(csv.DictReader(handle))
-            self.assertEqual(list(rows[0]), jsonl_to_csv.FIELDS)
-            self.assertEqual(rows[0]["id"], "book-001")
+            self.assertEqual(rows, [record()])
 
     def test_duplicate_json_keys_are_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -78,12 +78,59 @@ class JsonlToCsvTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertEqual(outside.read_text(encoding="utf-8"), "do not modify")
 
+    def test_oversized_line_range_has_record_context(self):
+        with self.assertRaisesRegex(ValueError, r"book.jsonl:7: invalid correct_line range"):
+            jsonl_to_csv.parse_line_range("9" * 5000, Path("book.jsonl"), 7, "correct_line")
+
+    def test_new_csv_uses_normal_umask_permissions(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permission bits are not portable to Windows")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "book.jsonl"
+            destination = root / "book.csv"
+            source.write_text(json.dumps(record(), ensure_ascii=False) + "\n", encoding="utf-8")
+            previous_umask = os.umask(0o027)
+            try:
+                result = jsonl_to_csv.main(["jsonl_to_csv.py", str(source), str(destination)])
+            finally:
+                os.umask(previous_umask)
+            self.assertEqual(result, 0)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
+
+    def test_existing_csv_mode_is_preserved(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permission bits are not portable to Windows")
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            source = root / "book.jsonl"
+            destination = root / "book.csv"
+            source.write_text(json.dumps(record(), ensure_ascii=False) + "\n", encoding="utf-8")
+            destination.write_text("old", encoding="utf-8")
+            destination.chmod(0o640)
+            result = jsonl_to_csv.main(["jsonl_to_csv.py", str(source), str(destination)])
+            self.assertEqual(result, 0)
+            self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o640)
+
     def test_same_input_and_output_path_is_rejected(self):
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "book.jsonl"
             path.write_text(json.dumps(record(), ensure_ascii=False) + "\n", encoding="utf-8")
             original = path.read_bytes()
             result = jsonl_to_csv.main(["jsonl_to_csv.py", str(path), str(path)])
+            self.assertEqual(result, 2)
+            self.assertEqual(path.read_bytes(), original)
+
+    def test_input_and_output_alias_with_parent_segments_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            path = root / "book.jsonl"
+            path.write_text(json.dumps(record(), ensure_ascii=False) + "\n", encoding="utf-8")
+            original = path.read_bytes()
+            alias_dir = root / "sub"
+            alias_dir.mkdir()
+            alias = alias_dir / ".." / "book.jsonl"
+            result = jsonl_to_csv.main(["jsonl_to_csv.py", str(path), str(alias)])
             self.assertEqual(result, 2)
             self.assertEqual(path.read_bytes(), original)
 

@@ -17,33 +17,33 @@ from pathlib import Path
 import validate
 
 
-def is_path_link(path):
-    path = os.path.abspath(path)
-    current = path
-    while True:
-        candidate = Path(current)
-        if candidate.is_symlink():
+def has_link_below_root(path, root):
+    """Check the data root and its descendants, not unrelated OS ancestors."""
+    path = Path(path)
+    root = Path(root)
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return validate.is_path_link(path)
+    current = root
+    for component in relative.parts[:-1]:
+        current = current / component
+        if validate.is_path_link(current):
             return True
-        is_junction = getattr(candidate, "is_junction", None)
-        if is_junction and is_junction():
-            return True
-        parent = os.path.dirname(current)
-        if parent == current:
-            return False
-        current = parent
+    return validate.is_path_link(path)
 
 
 def load_data(data_dir="datasets"):
     rows = {}
     root = os.path.abspath(data_dir)
-    if is_path_link(root):
+    if validate.is_path_link(root):
         print(f"Warning: refusing to read through a symlink or junction: {root!r}", file=sys.stderr)
         return rows
     # Only load the canonical file at datasets/<category>/<book>/<book>.jsonl.
     # Ignore nested examples, backups, and any alternate JSONL files.
     pattern = os.path.join(root, "*", "*", "*.jsonl")
     for p in sorted(glob.glob(pattern)):
-        if is_path_link(p):
+        if has_link_below_root(p, Path(root)):
             print(f"Warning: ignoring JSONL path containing a symlink/junction: {p!r}", file=sys.stderr)
             continue
         if os.path.basename(p) != os.path.basename(os.path.dirname(p)) + ".jsonl":

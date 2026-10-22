@@ -52,6 +52,7 @@ class PinnedSourceCacheTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(data, self.data)
         self.assertEqual(outside_file.read_bytes(), b"outside must remain unchanged")
+        self.assertFalse(Path(library.cache_path("Book", self.meta)).exists())
         fetch.assert_called_once_with(self.meta, self.meta["origin_commit"])
 
     def test_symlinked_cache_file_is_replaced_without_touching_target(self):

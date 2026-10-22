@@ -1,6 +1,7 @@
 import contextlib
 import io
 import os
+import stat
 import sys
 import tempfile
 import types
@@ -171,6 +172,24 @@ class MappingTests(unittest.TestCase):
             )
             with self.assertRaisesRegex(update_sources.UpdateProblem, "duplicate JSON key"):
                 update_sources.read_rows(path)
+
+    def test_write_dataset_preserves_existing_file_modes(self):
+        if os.name == "nt":
+            self.skipTest("POSIX permission bits are not portable to Windows")
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            name = "ספר"
+            for filename in (f"{name}.jsonl", f"{name}.csv", f"{name}.מקור.json"):
+                path = directory / filename
+                path.write_text("old", encoding="utf-8")
+                path.chmod(0o640)
+
+            row = {field: "" for field in update_sources.FIELDS}
+            row.update({"id": "book-001", "query": "q", "type": "short"})
+            update_sources.write_dataset(directory, name, [row], {"book_name": name})
+
+            for filename in (f"{name}.jsonl", f"{name}.csv", f"{name}.מקור.json"):
+                self.assertEqual(stat.S_IMODE((directory / filename).stat().st_mode), 0o640)
 
     def test_write_dataset_rolls_back_if_replacement_fails(self):
         with tempfile.TemporaryDirectory() as temp:

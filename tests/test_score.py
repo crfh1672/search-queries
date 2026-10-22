@@ -36,10 +36,16 @@ class ScoreInputTests(unittest.TestCase):
         book = data_root / "הלכה" / "ספר"
         book.mkdir(parents=True)
         (book / "ספר.jsonl").write_text(
-            json.dumps(query_record("book-001", "q")) + "\\n",
+            json.dumps(query_record("book-001", "q")) + "\n",
             encoding="utf-8",
         )
         return data_root
+
+    def test_fixture_is_valid_jsonl(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            loaded = score.load_data(data_root)
+            self.assertEqual(set(loaded), {"book-001"})
 
     def run_score(self, results, data_root):
         with patch.object(
@@ -138,6 +144,24 @@ class ScoreInputTests(unittest.TestCase):
                 )
             with self.assertRaisesRegex(ValueError, "duplicate query ID"):
                 score.load_data(temp)
+
+    def test_loader_allows_symlinked_ancestor_above_data_root(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            actual = root / "actual"
+            book = actual / "datasets" / "הלכה" / "ספר"
+            book.mkdir(parents=True)
+            (book / "ספר.jsonl").write_text(
+                json.dumps(query_record("book-001", "query")) + "\n",
+                encoding="utf-8",
+            )
+            alias = root / "alias"
+            try:
+                alias.symlink_to(actual, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+            loaded = score.load_data(alias / "datasets")
+            self.assertEqual(set(loaded), {"book-001"})
 
     def test_loader_refuses_symlinked_data_root(self):
         with tempfile.TemporaryDirectory() as temp:

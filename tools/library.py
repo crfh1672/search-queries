@@ -187,8 +187,8 @@ def get_pinned(slug, meta, offline=False):
         cached = read_cache_file(Path(cache_dir) / Path(cp).name, want)
         if cached is not None:
             return cached, None
-    elif offline:
-        return None, f"לא ניתן להשתמש במטמון באופן בטוח: {cache_problem or 'תיקיית המטמון אינה זמינה'}"
+    elif offline and cache_problem:
+        return None, f"לא ניתן להשתמש במטמון באופן בטוח: {cache_problem}"
     if offline:
         return None, "אין עותק תקין במטמון והבדיקה רצה ב-offline. להריץ פעם אחת עם חיבור לרשת"
     try:

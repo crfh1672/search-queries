@@ -22,6 +22,7 @@ TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 import library  # noqa: E402
 import source_refs  # noqa: E402
+import validate  # noqa: E402
 
 FIELDS = [
     "id", "query", "type", "correct_ref", "correct_quote", "correct_line",
@@ -36,30 +37,10 @@ class UpdateProblem(Exception):
     """Raised when a source cannot be updated without guessing."""
 
 
-class DuplicateJSONKeyError(ValueError):
-    """Raised when JSON contains an ambiguous duplicate object key."""
-
-
-def unique_json_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise DuplicateJSONKeyError(f"duplicate JSON key {key!r}")
-        result[key] = value
-    return result
-
-
-def is_path_link(path: Path) -> bool:
-    if path.is_symlink():
-        return True
-    is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
-
-
 def path_has_link_component(path: Path) -> Path | None:
     path = Path(path).absolute()
     for component in reversed((path, *path.parents)):
-        if is_path_link(component):
+        if library.is_path_link(component):
             return component
     return None
 
@@ -71,11 +52,11 @@ def reject_symlink_tree(directory: Path) -> None:
         base = Path(current)
         for name in list(dirs):
             candidate = base / name
-            if is_path_link(candidate):
+            if library.is_path_link(candidate):
                 raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
         for name in files:
             candidate = base / name
-            if is_path_link(candidate):
+            if library.is_path_link(candidate):
                 raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
 
 
@@ -220,8 +201,8 @@ def read_rows(path: Path) -> list[dict[str, str]]:
             if not line.strip():
                 continue
             try:
-                row = json.loads(line, object_pairs_hook=unique_json_object)
-            except (json.JSONDecodeError, DuplicateJSONKeyError) as exc:
+                row = json.loads(line, object_pairs_hook=validate.unique_json_object)
+            except (json.JSONDecodeError, validate.DuplicateJSONKeyError) as exc:
                 raise UpdateProblem(f"invalid JSONL line {number}: {exc}") from exc
             if not isinstance(row, dict) or list(row) != FIELDS:
                 raise UpdateProblem(f"JSONL line {number} does not match the 12-field schema")
@@ -250,6 +231,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
         (directory / f"{name}.מקור.json", metadata_text.encode("utf-8")),
     ]
     originals: dict[Path, bytes] = {}
+    original_modes: dict[Path, int] = {}
     staged: dict[Path, Path] = {}
     replaced: list[Path] = []
 
@@ -257,12 +239,15 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
         # Capture every original before replacing any file. Refuse symlinked or
         # non-regular targets rather than reading/writing through a redirect.
         for target, _ in targets:
-            if is_path_link(target):
+            if library.is_path_link(target):
                 raise UpdateProblem(f"refusing to replace symlink/junction: {target}")
             info = target.lstat()
             if not os.path.isfile(target) or not stat.S_ISREG(info.st_mode):
                 raise UpdateProblem(f"required output is not a regular file: {target}")
-            fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            fd = os.open(
+                target,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+            )
             try:
                 opened = os.fstat(fd)
                 if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
@@ -279,6 +264,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
                 ):
                     raise UpdateProblem(f"output changed while reading: {target}")
                 originals[target] = b"".join(chunks)
+                original_modes[target] = stat.S_IMODE(after.st_mode)
             finally:
                 os.close(fd)
 
@@ -292,10 +278,11 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
                 handle.write(payload)
                 handle.flush()
                 os.fsync(handle.fileno())
+            os.chmod(temp, original_modes[target])
 
         reject_symlink_tree(directory)
         for target, _ in targets:
-            if is_path_link(target):
+            if library.is_path_link(target):
                 raise UpdateProblem(f"output became a symlink/junction during refresh: {target}")
             os.replace(staged[target], target)
             replaced.append(target)
@@ -319,6 +306,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
                     handle.write(originals[target])
                     handle.flush()
                     os.fsync(handle.fileno())
+                os.chmod(restore_name, original_modes[target])
                 os.replace(restore_name, target)
             except Exception as rollback_exc:
                 rollback_errors.append(f"{target}: {rollback_exc}")
@@ -345,8 +333,8 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     if not meta_path.is_file() or not jsonl_path.is_file() or not (directory / f"{name}.csv").is_file():
         raise UpdateProblem("required JSONL, CSV, or source metadata file is missing")
     try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, DuplicateJSONKeyError) as exc:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"), object_pairs_hook=validate.unique_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, validate.DuplicateJSONKeyError) as exc:
         raise UpdateProblem(f"source metadata is not valid JSON: {exc}") from exc
     expected = library.SOURCE_META_KEYS
     if not isinstance(meta, dict) or set(meta) != expected or meta.get("book_name") != name:

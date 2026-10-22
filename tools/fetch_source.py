@@ -17,18 +17,23 @@ import source_refs
 import validate
 
 
-def is_path_link(path: Path) -> bool:
-    if path.is_symlink():
-        return True
-    is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
-
-
 def path_has_link_component(path: Path) -> Path | None:
-    path = Path(path).absolute()
-    for component in reversed((path, *path.parents)):
-        if is_path_link(component):
-            return component
+    """Reject links within the repository path, but ignore OS-level ancestors."""
+    path = Path(os.path.abspath(path))
+    root = Path(os.path.abspath(REPO_ROOT))
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        # Explicit external paths are checked after resolving them in
+        # resolve_dataset(); this helper is for paths inside the checkout.
+        return None
+    current = root
+    if library.is_path_link(current):
+        return current
+    for component in relative.parts:
+        current = current / component
+        if library.is_path_link(current):
+            return current
     return None
 
 
@@ -39,21 +44,12 @@ def reject_link_tree(root: Path) -> None:
         base = Path(current)
         for name in list(dirs):
             candidate = base / name
-            if is_path_link(candidate):
+            if library.is_path_link(candidate):
                 raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
         for name in files:
             candidate = base / name
-            if is_path_link(candidate):
+            if library.is_path_link(candidate):
                 raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
-
-
-def unique_json_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate JSON key {key!r}")
-        result[key] = value
-    return result
 
 
 def resolve_dataset(value: str) -> Path:
@@ -63,31 +59,38 @@ def resolve_dataset(value: str) -> Path:
     if path_has_link_component(candidate) is not None:
         raise SystemExit(f"נתיב המערך מכיל symlink או junction: {candidate}")
     try:
-        candidate.resolve(strict=True).relative_to(REPO_ROOT.resolve(strict=True))
+        resolved_candidate = candidate.resolve(strict=True)
     except (OSError, ValueError):
-        # Name-only lookups are allowed below, but explicit paths outside the
-        # repository are never accepted.
-        if supplied.is_absolute() or (len(supplied.parts) > 1):
-            raise SystemExit("נתיב המערך חייב להיות בתוך המאגר")
+        # Missing paths (including explicit in-repository paths) should fall
+        # through to the normal "not found" lookup message.
+        resolved_candidate = None
+    if resolved_candidate is not None:
+        try:
+            resolved_candidate.relative_to(REPO_ROOT.resolve(strict=True))
+        except ValueError:
+            if candidate.exists():
+                raise SystemExit("נתיב המערך חייב להיות בתוך המאגר")
+        else:
+            candidate = resolved_candidate
 
     if candidate.is_dir() and (candidate / f"{candidate.name}.מקור.json").is_file():
         reject_link_tree(candidate)
         meta_path = candidate / f"{candidate.name}.מקור.json"
-        if is_path_link(meta_path) or not meta_path.is_file():
+        if library.is_path_link(meta_path) or not meta_path.is_file():
             raise SystemExit(f"קובץ המקור חסר או אינו קובץ רגיל: {meta_path}")
         return candidate.resolve(strict=True)
 
     matches = []
     for root_name in ("datasets", "drafts"):
         root = REPO_ROOT / root_name
-        if is_path_link(root):
+        if library.is_path_link(root):
             raise SystemExit(f"תיקיית {root_name} אינה יכולה להיות symlink או junction")
         if root.exists():
             for current, dirs, files in os.walk(root, followlinks=False):
                 base = Path(current)
-                dirs[:] = [name for name in dirs if not is_path_link(base / name)]
+                dirs[:] = [name for name in dirs if not library.is_path_link(base / name)]
                 for name in files:
-                    if not name.endswith(".מקור.json") or is_path_link(base / name):
+                    if not name.endswith(".מקור.json") or library.is_path_link(base / name):
                         continue
                     if base.name == value:
                         matches.append(base)
@@ -165,7 +168,7 @@ def main():
     meta_path = directory / f"{name}.מקור.json"
     try:
         with meta_path.open(encoding="utf-8") as handle:
-            meta = json.load(handle, object_pairs_hook=unique_json_object)
+            meta = json.load(handle, object_pairs_hook=validate.unique_json_object)
     except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
         raise SystemExit(f"קובץ המטא־נתונים אינו תקין: {exc}") from exc
     if not isinstance(meta, dict):

@@ -48,6 +48,19 @@ class DatasetPathSafetyTests(unittest.TestCase):
         with self.assertRaisesRegex(SystemExit, "symlink או junction"):
             fetch_source.resolve_dataset("datasets/הלכה/ספר")
 
+    def test_missing_in_repo_path_uses_not_found_message(self):
+        with self.assertRaisesRegex(SystemExit, "לא נמצא מערך בשם או בנתיב"):
+            fetch_source.resolve_dataset("datasets/missing-book")
+
+    def test_existing_outside_path_is_rejected(self):
+        outside = self.root.parent / (self.root.name + "-outside")
+        outside.mkdir()
+        (outside / f"{outside.name}.מקור.json").write_text(
+            json.dumps({"book_name": outside.name}), encoding="utf-8"
+        )
+        with self.assertRaisesRegex(SystemExit, "חייב להיות בתוך המאגר"):
+            fetch_source.resolve_dataset(str(outside))
+
 
 class SourceDiffTests(unittest.TestCase):
     def test_heading_only_change_is_reported(self):

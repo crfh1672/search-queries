@@ -7,6 +7,7 @@ import hashlib
 import json
 import os
 import re
+import stat
 import sys
 import tempfile
 from pathlib import Path
@@ -52,6 +53,8 @@ def parse_line_range(value: str, path: Path, line_number: int, field: str) -> tu
     match = LINE_RE.fullmatch(value)
     if not match:
         raise ValueError(f"{path}:{line_number}: invalid {field} range {value!r}")
+    if len(match.group(1)) > 4000 or len(match.group(2) or "") > 4000:
+        raise ValueError(f"{path}:{line_number}: invalid {field} range (number too long)")
     start = int(match.group(1))
     end = int(match.group(2) or match.group(1))
     if start < 1 or end < start:
@@ -129,14 +132,26 @@ def load_records(path: Path) -> list[dict[str, str]]:
     return records
 
 
+def replacement_mode(destination: Path) -> int:
+    """Preserve existing permissions; new files respect the current umask."""
+    try:
+        info = destination.lstat()
+    except FileNotFoundError:
+        mask = os.umask(0)
+        os.umask(mask)
+        return 0o666 & ~mask
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError(f"{destination}: output destination is not a regular file")
+    return stat.S_IMODE(info.st_mode)
+
+
 def write_csv_atomic(destination: Path, records: list[dict[str, str]]) -> None:
     if path_has_link_component(destination) is not None:
         raise ValueError(f"{destination}: output path must not contain symlinks or junctions")
     destination.parent.mkdir(parents=True, exist_ok=True)
     if path_has_link_component(destination) is not None:
         raise ValueError(f"{destination}: output path must not contain symlinks or junctions")
-    if destination.exists() and not destination.is_file():
-        raise ValueError(f"{destination}: output destination is not a regular file")
+    mode = replacement_mode(destination)
 
     fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", suffix=".tmp", dir=destination.parent)
     try:
@@ -151,6 +166,7 @@ def write_csv_atomic(destination: Path, records: list[dict[str, str]]) -> None:
             writer.writerows(records)
             handle.flush()
             os.fsync(handle.fileno())
+        os.chmod(temporary, mode)
         if path_has_link_component(destination) is not None:
             raise ValueError(f"{destination}: output path became a symlink or junction")
         os.replace(temporary, destination)
@@ -177,7 +193,12 @@ def main(argv: list[str]) -> int:
         )
         return 2
     source, destination = Path(argv[1]).absolute(), Path(argv[2]).absolute()
-    if source == destination:
+    try:
+        same_path = source.resolve() == destination.resolve()
+    except OSError as exc:
+        print(f"ERROR: unable to compare input/output paths: {exc}", file=sys.stderr)
+        return 1
+    if same_path:
         print("ERROR: input and output paths must be different", file=sys.stderr)
         return 2
     try:
