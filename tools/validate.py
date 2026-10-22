@@ -58,8 +58,10 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     try:
         with open(os.path.join(d, f_meta), encoding="utf-8") as f:
             meta = json.load(f)
-    except json.JSONDecodeError as e:
-        return [f"{d}/{f_meta}: JSON לא תקין ({e})"]
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        return [f"{d}/{f_meta}: לא ניתן לקרוא JSON תקין ({e})"]
+    if not isinstance(meta, dict):
+        return [f"{d}/{f_meta}: המטא־נתונים חייבים להיות אובייקט JSON"]
     if set(meta) != META_KEYS:
         err(f"{f_meta}: מפתחות לא תקינים. חסרים {sorted(META_KEYS - set(meta))}, מיותרים {sorted(set(meta) - META_KEYS)}")
         return errs
@@ -67,6 +69,15 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         source_category = library.validate_source_origin(meta)
     except (KeyError, TypeError, ValueError) as exc:
         err(f"{f_meta}: מקור לא תקין: {exc}")
+        return errs
+    if not all(isinstance(meta.get(key), str) for key in META_KEYS):
+        err(f"{f_meta}: כל ערכי המטא־נתונים חייבים להיות מחרוזות")
+        return errs
+    if not re.fullmatch(r"[a-z]+", meta["id_prefix"]):
+        err(f"{f_meta}: id_prefix חייב להכיל אותיות לטיניות קטנות בלבד")
+        return errs
+    if not meta["book_name"].strip() or not meta["note"] == meta["note"]:
+        err(f"{f_meta}: book_name או note אינם תקינים")
         return errs
     if not (isinstance(meta.get("origin_commit"), str) and re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"])):
         err(f"{f_meta}: origin_commit חייב להיות SHA מלא של קומיט (40 תווים)")
@@ -231,19 +242,57 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     return errs
 
 
+def symlink_entries(root):
+    """List symbolic links without traversing them."""
+    root = Path(root)
+    if root.is_symlink():
+        return [root]
+    if not root.is_dir():
+        return []
+    found = []
+    for current, dirs, files in os.walk(root, followlinks=False):
+        base = Path(current)
+        for name in list(dirs):
+            candidate = base / name
+            if candidate.is_symlink():
+                found.append(candidate)
+                dirs.remove(name)
+        for name in files:
+            candidate = base / name
+            if candidate.is_symlink():
+                found.append(candidate)
+    return sorted(found)
+
+
 def dataset_dirs(root):
     root = Path(root)
-    if not root.exists():
+    if root.is_symlink() or not root.is_dir():
         return []
-    # Include canonical nested book folders, plus misplaced depth-1 folders
-    # that contain JSONL files so their missing metadata/path layout is reported.
-    candidates = {p.parent for p in root.rglob("*.מקור.json")}
-    candidates.update(p for p in root.glob("*/*") if p.is_dir())
-    candidates.update(
-        p for p in root.glob("*")
-        if p.is_dir() and any(p.glob("*.jsonl"))
-    )
+    # Walk without following symlinks. Catch canonical nested folders, metadata
+    # files, and misplaced top-level folders containing JSONL.
+    candidates = set()
+    for current, dirs, files in os.walk(root, followlinks=False):
+        base = Path(current)
+        dirs[:] = [name for name in dirs if not (base / name).is_symlink()]
+        relative = base.relative_to(root)
+        if any(name.endswith(".מקור.json") and not (base / name).is_symlink() for name in files):
+            candidates.add(base)
+        if len(relative.parts) == 2:
+            candidates.add(base)
+        if len(relative.parts) == 1 and any(name.endswith(".jsonl") for name in files):
+            candidates.add(base)
     return sorted(candidates)
+
+
+def path_symlink_component(path):
+    path = Path(path).absolute()
+    for component in reversed((path, *path.parents)):
+        try:
+            if component.is_symlink():
+                return component
+        except OSError:
+            continue
+    return None
 
 
 def discover_target(path):
@@ -260,19 +309,35 @@ def discover_target(path):
 def main(argv):
     offline = "--offline" in argv
     args = [a for a in argv[1:] if a != "--offline"]
-    repo_root = Path(TOOLS_DIR).parent
+    repo_root = Path(TOOLS_DIR).parent.resolve()
+    scan_errors = []
     if args:
         targets = []
         for arg in args:
-            found = discover_target(arg)
+            supplied = Path(arg)
+            supplied = supplied if supplied.is_absolute() else Path.cwd() / supplied
+            symlink = path_symlink_component(supplied)
+            if symlink is not None:
+                scan_errors.append(f"{symlink}: paths containing symlinks are not validated")
+                continue
+            found = discover_target(supplied)
             targets.extend((p, None) for p in found)
             if not found:
-                targets.append((Path(arg), None))
+                targets.append((supplied, None))
     else:
-        targets = (
-            [(p, True) for p in dataset_dirs(repo_root / "datasets")] +
-            [(p, False) for p in dataset_dirs(repo_root / "drafts")]
-        )
+        targets = []
+        for root_name, required in (("datasets", True), ("drafts", False)):
+            root = repo_root / root_name
+            if root.is_symlink():
+                scan_errors.append(f"{root}: dataset root must not be a symlink")
+                continue
+            links = symlink_entries(root)
+            scan_errors.extend(f"{link}: symlinks are not allowed under {root_name}" for link in links)
+            candidates = dataset_dirs(root)
+            targets.extend(
+                (p, required) for p in candidates
+                if not any(p == link or p in link.parents for link in links)
+            )
 
     unique = {}
     for path, required in targets:
@@ -282,7 +347,7 @@ def main(argv):
         elif required is True:
             unique[key] = True
 
-    all_errs, total = [], 0
+    all_errs, total = list(scan_errors), 0
     for value, required in unique.items():
         target = Path(value)
         e = validate_dataset(str(target), offline=offline, require_verified=required)
