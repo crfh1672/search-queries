@@ -116,13 +116,17 @@ def reference_for_line(lines: list[str], line_no: int, book_name: str) -> str:
         raise UpdateProblem(str(exc)) from exc
 
 
-def map_citation(row: dict[str, str], prefix: str, old: list[str],
-                 new: list[str], mapping: dict[int, int], masechet: str) -> None:
+def map_citation(
+    row: dict[str, str], prefix: str, old: list[str], new: list[str],
+    mapping: dict[int, int], book_name: str,
+    reference_lines: list[str] | None = None,
+) -> None:
     line_key, quote_key, ref_key = f"{prefix}_line", f"{prefix}_quote", f"{prefix}_ref"
     start, end = locate_quote(old, new, row[quote_key], parse_span(row[line_key]), mapping)
-    ref = reference_for_line(new, start, masechet)
-    if reference_for_line(new, end, masechet) != ref:
-        raise UpdateProblem(f"{prefix} quote crosses a page-side boundary")
+    ref_source = reference_lines if reference_lines is not None else new
+    ref = reference_for_line(ref_source, start, book_name)
+    if reference_for_line(ref_source, end, book_name) != ref:
+        raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary")
     row[line_key] = str(start) if start == end else f"{start}-{end}"
     row[ref_key] = ref
 
@@ -226,12 +230,14 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     if problem or old_raw is None:
         raise UpdateProblem(f"cannot load pinned source: {problem or 'unknown error'}")
     old, new = normalized_lines(old_raw), normalized_lines(new_raw)
+    old_reference_lines = old_raw.decode("utf-8").split("\n")
+    new_reference_lines = new_raw.decode("utf-8").split("\n")
     mapping, rows, issues = line_map(old, new), read_rows(jsonl_path), []
     for row in rows:
         original = dict(row)
         try:
-            map_citation(row, "correct", old, new, mapping, name)
-            map_citation(row, "near_miss", old, new, mapping, name)
+            map_citation(row, "correct", old, new, mapping, name, new_reference_lines)
+            map_citation(row, "near_miss", old, new, mapping, name, new_reference_lines)
             ensure_citations_do_not_overlap(row)
             row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
@@ -260,7 +266,6 @@ def main() -> int:
     root = Path(args.datasets_dir)
     issues, results = [], []
     dirs = sorted({p.parent for p in root.rglob("*.מקור.json")}) if root.exists() else []
-                  if p.is_dir() and (p / f"{p.name}.מקור.json").is_file()) if root.exists() else []
     for directory in dirs:
         try:
             result, issue = update_dataset(directory, args.ref)
