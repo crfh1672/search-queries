@@ -46,6 +46,15 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     errs = []
     def err(msg): errs.append(f"{d}: {msg}")
 
+    dataset_path = Path(d).absolute()
+    symlink = path_symlink_component(dataset_path)
+    if symlink is not None:
+        return [f"{symlink}: נתיב המכיל קישור סמלי אינו נבדק"]
+    if dataset_path.is_dir():
+        links = symlink_entries(dataset_path)
+        if links:
+            return [f"{link}: קישורים סמליים אסורים בתוך מערך נתונים" for link in links]
+
     name = os.path.basename(os.path.normpath(d))
     f_jsonl, f_csv, f_meta = f"{name}.jsonl", f"{name}.csv", f"{name}.מקור.json"
     for n in (f_jsonl, f_csv, f_meta):
@@ -139,7 +148,12 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         err(f"{f_jsonl}: אסור BOM")
     if data and not data.endswith(b"\n"):
         err(f"{f_jsonl}: חסר מעבר שורה בסוף הקובץ")
-    for n, line in enumerate(data.decode("utf-8-sig").split("\n"), 1):
+    try:
+        jsonl_text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        err(f"{f_jsonl}: הקובץ אינו בקידוד UTF-8 ({exc})")
+        return errs
+    for n, line in enumerate(jsonl_text.split("\n"), 1):
         if not line.strip():
             continue
         try:
@@ -210,21 +224,25 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
             err(f"{w}: near_miss_same_section לא עקבי עם ה-refs")
 
     # --- CSV ---
-    with open(os.path.join(d, f_csv), encoding="utf-8-sig", newline="") as f:
-        rd = csv.reader(f)
-        try:
-            header = next(rd)
-        except StopIteration:
-            err(f"{f_csv} ריק"); return errs
-        if header != FIELDS:
-            err(f"{f_csv}: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
-        csv_rows = []
-        for i, cells in enumerate(rd, 2):
-            if not any(c.strip() for c in cells):
-                continue
-            if len(cells) != len(FIELDS):
-                err(f"{f_csv}:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
-            csv_rows.append(dict(zip(FIELDS, cells)))
+    try:
+        with open(os.path.join(d, f_csv), encoding="utf-8-sig", newline="") as f:
+            rd = csv.reader(f)
+            try:
+                header = next(rd)
+            except StopIteration:
+                err(f"{f_csv} ריק"); return errs
+            if header != FIELDS:
+                err(f"{f_csv}: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
+            csv_rows = []
+            for i, cells in enumerate(rd, 2):
+                if not any(c.strip() for c in cells):
+                    continue
+                if len(cells) != len(FIELDS):
+                    err(f"{f_csv}:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
+                csv_rows.append(dict(zip(FIELDS, cells)))
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        err(f"{f_csv}: לא ניתן לקרוא CSV תקין ({exc})")
+        return errs
     if header == FIELDS:
         by_id = {r["id"]: {k: r[k] for k in FIELDS} for r in rows if "id" in r}
         csv_ids = [r["id"] for r in csv_rows]
@@ -331,6 +349,9 @@ def main(argv):
             if root.is_symlink():
                 scan_errors.append(f"{root}: dataset root must not be a symlink")
                 continue
+            if root.exists() and not root.is_dir():
+                scan_errors.append(f"{root}: dataset root must be a directory")
+                continue
             links = symlink_entries(root)
             scan_errors.extend(f"{link}: symlinks are not allowed under {root_name}" for link in links)
             candidates = dataset_dirs(root)
@@ -352,9 +373,12 @@ def main(argv):
         target = Path(value)
         e = validate_dataset(str(target), offline=offline, require_verified=required)
         jp = target / f"{target.name}.jsonl"
-        if jp.is_file():
-            with jp.open(encoding="utf-8") as handle:
-                total += sum(1 for line in handle if line.strip())
+        if jp.is_file() and not jp.is_symlink():
+            try:
+                with jp.open(encoding="utf-8") as handle:
+                    total += sum(1 for line in handle if line.strip())
+            except (OSError, UnicodeDecodeError) as exc:
+                all_errs.append(f"{jp}: לא ניתן לספור שורות ({exc})")
         print(f"{'✗' if e else '✓'} {target}  ({len(e)} בעיות)")
         all_errs += e
     for error in all_errs[:60]:
