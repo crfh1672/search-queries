@@ -30,7 +30,7 @@ TYPES = {"conceptual", "short"}
 SPLITS = {"test", "train"}
 YESNO = {"כן", "לא"}
 META_KEYS = library.SOURCE_META_KEYS
-LINE_RE = re.compile(r"^\\d+(-\\d+)?$")
+LINE_RE = re.compile(r"^\d+(-\d+)?$")
 
 
 def span(s):
@@ -166,7 +166,7 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         seen.add(r["id"])
         if r["type"] not in TYPES: err(f"{w}: type לא חוקי ({r['type']})")
         if r["split"] not in SPLITS: err(f"{w}: split לא חוקי ({r['split']})")
-        if r["near_miss_same_amud"] not in YESNO: err(f"{w}: near_miss_same_amud חייב להיות כן/לא")
+        if r["near_miss_same_section"] not in YESNO: err(f"{w}: near_miss_same_section חייב להיות כן/לא")
         if r["correct_quote"] == r["near_miss_quote"]:
             err(f"{w}: הציטוט הנכון והכמעט נכון זהים")
         for which in ("correct", "near_miss"):
