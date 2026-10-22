@@ -18,13 +18,13 @@ from pathlib import Path
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 import library  # noqa: E402
+import source_refs  # noqa: E402
 
 FIELDS = [
     "id", "query", "type", "correct_ref", "correct_quote", "correct_line",
     "near_miss_ref", "near_miss_quote", "near_miss_line",
-    "near_miss_same_amud", "split", "verified_by_human",
+    "near_miss_same_section", "split", "verified_by_human",
 ]
-HEADER_RE = re.compile(r'^\s*דף ([א-ת"״׳\']+)([.:])\s*$')
 LINE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 API = "https://api.github.com"
 
@@ -108,25 +108,12 @@ def locate_quote(old: list[str], new: list[str], quote: str,
     raise UpdateProblem(f"quote has {len(hits)} possible new locations")
 
 
-def reference_for_line(lines: list[str], line_no: int, masechet: str) -> str:
-    current = None
-    for number, line in enumerate(lines, 1):
-        if number > line_no:
-            break
-        match = HEADER_RE.match(line)
-        if match:
-            raw_daf, punctuation = match.groups()
-            # Match the repository validator's normalized reference format:
-            # Hebrew numeral punctuation (geresh/gershayim) is omitted from refs.
-            daf = re.sub(r"""["״׳']""", "", raw_daf)
-            if re.fullmatch(r"[א-ת]+", daf):
-                current = (daf, "א" if punctuation == "." else "ב")
-            else:
-                raise UpdateProblem(f"unrecognized page heading at source line {number}: {line}")
-    if current is None:
-        raise UpdateProblem(f"no recognizable page heading before line {line_no}")
-    daf, amud = current
-    return f'{masechet} {daf} ע"{amud}'
+def reference_for_line(lines: list[str], line_no: int, book_name: str) -> str:
+    """Return the exact heading path used by the Otzaria book's table of contents."""
+    try:
+        return source_refs.reference_at_line(lines, line_no)
+    except ValueError as exc:
+        raise UpdateProblem(str(exc)) from exc
 
 
 def map_citation(row: dict[str, str], prefix: str, old: list[str],
@@ -221,10 +208,13 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     if not meta_path.is_file() or not jsonl_path.is_file() or not (directory / f"{name}.csv").is_file():
         raise UpdateProblem("required JSONL, CSV, or source metadata file is missing")
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    expected = {"masechet", "id_prefix", "origin_repo", "origin_path",
-                "origin_commit", "origin_sha256", "note"}
-    if not isinstance(meta, dict) or set(meta) != expected or meta["masechet"] != name:
+    expected = library.SOURCE_META_KEYS
+    if not isinstance(meta, dict) or set(meta) != expected or meta.get("book_name") != name:
         raise UpdateProblem("source metadata does not match the expected schema")
+    try:
+        library.validate_source_origin(meta)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise UpdateProblem(f"invalid Otzaria source provenance: {exc}") from exc
     if not re.fullmatch(r"[0-9a-f]{40}", str(meta["origin_commit"])):
         raise UpdateProblem("origin_commit must be a full 40-character SHA")
     commit = latest_commit(meta, ref)
@@ -243,7 +233,7 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
             map_citation(row, "correct", old, new, mapping, name)
             map_citation(row, "near_miss", old, new, mapping, name)
             ensure_citations_do_not_overlap(row)
-            row["near_miss_same_amud"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
+            row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
             issues.append(f"- {row['id']} ({row['query']}): {exc}")
             row.clear()
@@ -269,7 +259,7 @@ def main() -> int:
     args = parser.parse_args()
     root = Path(args.datasets_dir)
     issues, results = [], []
-    dirs = sorted(p for p in root.iterdir()
+    dirs = sorted({p.parent for p in root.rglob("*.מקור.json")}) if root.exists() else []
                   if p.is_dir() and (p / f"{p.name}.מקור.json").is_file()) if root.exists() else []
     for directory in dirs:
         try:
