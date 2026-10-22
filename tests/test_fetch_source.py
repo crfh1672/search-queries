@@ -72,6 +72,13 @@ class SourceDiffTests(unittest.TestCase):
         )
         self.assertIn(2, diff)
 
+    def test_unrelated_later_section_keeps_stable_identity(self):
+        _, _, diff = fetch_source.compare_source_lines(
+            b"<h2>A</h2>\nfirst\nsecond\n<h2>B</h2>\nbody\n",
+            b"<h2>A</h2>\nfirst\n<h3>Child</h3>\n<h2>B</h2>\nbody\n",
+        )
+        self.assertEqual(diff, [3])
+
     def test_malformed_heading_fails_with_value_error(self):
         with self.assertRaisesRegex(ValueError, "malformed heading"):
             fetch_source.compare_source_lines(
