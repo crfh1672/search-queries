@@ -100,6 +100,10 @@ class Valid(Base):
                 "טקסט",
             ])
 
+    def test_empty_markdown_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed heading at source line 2"):
+            source_refs.line_references(["<h1>ספר</h1>", "## ", "טקסט"])
+
     def test_toc_excluded_heading_does_not_replace_reference(self):
         refs = source_refs.line_references([
             "<h1>כתר ראש</h1>",
@@ -280,6 +284,15 @@ class SourceChecks(Base):
         with open(p, "w", encoding="utf-8") as f:
             json.dump(meta, f, ensure_ascii=False)
         self.assertTrue(self.has("origin_repo must be https://github.com/Otzaria/otzaria-library"))
+
+    def test_uppercase_txt_source_extension_is_rejected(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_path"] = "MoreBooks/ספרים/אוצריא/בדיקה/בדיקה.TXT"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("origin_path must point to an Otzaria .txt book"))
 
     def test_source_category_must_match_library_path(self):
         p = os.path.join(self.d, NAME + ".מקור.json")
