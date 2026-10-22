@@ -18,6 +18,13 @@ sys.path.insert(0, str(TOOLS_DIR))
 import validate
 
 
+def is_path_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
 def directory_open_flags() -> int:
     return os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
 
@@ -49,7 +56,7 @@ def source_files_supported_by_dir_fd() -> bool:
 
 def read_stable_regular_file(path: Path) -> bytes:
     before = path.lstat()
-    if stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
+    if is_path_link(path) or stat.S_ISLNK(before.st_mode) or not stat.S_ISREG(before.st_mode):
         raise ValueError(f"only regular files are allowed in a draft: {path}")
 
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
@@ -75,14 +82,14 @@ def read_stable_regular_file(path: Path) -> bytes:
 def copy_tree_snapshot(source: Path, target: Path) -> tuple[os.stat_result, dict[str, str]]:
     """Copy an ordinary directory tree into private staging, rejecting links/special files."""
     root_before = source.lstat()
-    if stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
+    if is_path_link(source) or stat.S_ISLNK(root_before.st_mode) or not stat.S_ISDIR(root_before.st_mode):
         raise ValueError("draft must be a real directory, not a symlink")
 
     manifest: dict[str, str] = {}
 
     def copy_contents(src_dir: Path, dst_dir: Path, prefix: str = "") -> None:
         before = src_dir.lstat()
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+        if is_path_link(src_dir) or stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
             raise ValueError(f"draft directory changed or is not a directory: {src_dir}")
         before_names = sorted(p.name for p in src_dir.iterdir())
 
@@ -90,7 +97,7 @@ def copy_tree_snapshot(source: Path, target: Path) -> tuple[os.stat_result, dict
             src = src_dir / name
             dst = dst_dir / name
             info = src.lstat()
-            if stat.S_ISLNK(info.st_mode):
+            if is_path_link(src) or stat.S_ISLNK(info.st_mode):
                 raise ValueError(f"draft contents must not contain symlinks: {src}")
             relative = f"{prefix}/{name}" if prefix else name
             if stat.S_ISDIR(info.st_mode):
@@ -125,14 +132,14 @@ def tree_fingerprint(root: Path) -> dict[str, str]:
 
     def walk(directory: Path, prefix: str = "") -> None:
         before = directory.lstat()
-        if stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
+        if is_path_link(directory) or stat.S_ISLNK(before.st_mode) or not stat.S_ISDIR(before.st_mode):
             raise ValueError(f"not a real directory: {directory}")
         names = sorted(p.name for p in directory.iterdir())
         for name in names:
             path = directory / name
             info = path.lstat()
             relative = f"{prefix}/{name}" if prefix else name
-            if stat.S_ISLNK(info.st_mode):
+            if is_path_link(path) or stat.S_ISLNK(info.st_mode):
                 raise ValueError(f"symlink encountered: {path}")
             if stat.S_ISDIR(info.st_mode):
                 walk(path, relative)
@@ -181,7 +188,7 @@ def ensure_safe_destination_parent(parent: Path) -> None:
         except FileNotFoundError:
             current.mkdir()
             info = current.lstat()
-        if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        if is_path_link(current) or stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
             raise ValueError(f"destination component must be a real directory: {current}")
         try:
             current.resolve(strict=True).relative_to(repo_root)
@@ -235,14 +242,14 @@ def atomic_promote(source: Path, destination: Path, verified_stat, expected_mani
                 os.close(fd)
     else:
         ensure_safe_destination_parent(destination.parent)
-        if destination.exists() or destination.is_symlink():
+        if destination.exists() or is_path_link(destination):
             raise FileExistsError(f"destination already exists: {destination}")
-        if source.is_symlink() or not is_same_directory(source.lstat(), verified_stat):
+        if is_path_link(source) or not is_same_directory(source.lstat(), verified_stat):
             raise RuntimeError("staging directory changed; promotion cancelled")
         os.rename(source, destination)
         moved = destination.lstat()
         if not is_same_directory(moved, verified_stat):
-            if not source.exists() and not source.is_symlink():
+            if not source.exists() and not is_path_link(source):
                 os.rename(destination, source)
             raise RuntimeError("moved directory identity changed; promotion rolled back")
 
@@ -264,7 +271,7 @@ def main() -> int:
 
     supplied = Path(args.draft)
     candidate = supplied if supplied.is_absolute() else Path.cwd() / supplied
-    if any(part.is_symlink() for part in (candidate, *candidate.parents)):
+    if any(is_path_link(part) for part in (candidate, *candidate.parents)):
         parser.error("draft path must not traverse symlinks")
     try:
         source = candidate.resolve(strict=True)
@@ -279,7 +286,7 @@ def main() -> int:
 
     try:
         source_info = source.lstat()
-        if stat.S_ISLNK(source_info.st_mode) or not stat.S_ISDIR(source_info.st_mode):
+        if is_path_link(source) or stat.S_ISLNK(source_info.st_mode) or not stat.S_ISDIR(source_info.st_mode):
             parser.error("draft must be a real directory, not a symlink")
         # Catch symlinks before snapshotting to provide a direct explanation.
         tree_fingerprint(source)
