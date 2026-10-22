@@ -409,6 +409,19 @@ def main() -> int:
     if root.exists() and not root.is_dir():
         print(f"Dataset root is not a directory: {root}", file=sys.stderr)
         return 1
+
+    # Validate the report destination before changing any dataset files.
+    report = Path(args.report)
+    if path_has_link_component(report) is not None:
+        print(f"Refusing to write a report path containing a symlink or junction: {report}", file=sys.stderr)
+        return 1
+    if not report.parent.exists() or not report.parent.is_dir():
+        print(f"Report parent directory does not exist: {report.parent}", file=sys.stderr)
+        return 1
+    if report.exists() and not report.is_file():
+        print(f"Report destination is not a regular file: {report}", file=sys.stderr)
+        return 1
+
     issues, results = [], []
     dirs = sorted({p.parent for p in root.rglob("*.מקור.json")}) if root.exists() else []
     for directory in dirs:
@@ -420,10 +433,6 @@ def main() -> int:
         except Exception as exc:
             results.append(f"{directory.name}: not updated ({type(exc).__name__}: {exc})")
             issues.append(f"## {directory.name}\n\nDataset unchanged. Error: {type(exc).__name__}: {exc}\n")
-    report = Path(args.report)
-    if path_has_link_component(report) is not None:
-        print(f"Refusing to write a report path containing a symlink or junction: {report}", file=sys.stderr)
-        return 1
     if issues:
         report.write_text("# Source update report — manual review required\n\n" + "\n\n".join(issues), encoding="utf-8")
     elif report.exists():
