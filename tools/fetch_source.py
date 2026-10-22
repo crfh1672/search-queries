@@ -6,12 +6,14 @@ Examples:
     python tools/fetch_source.py "שו״ת שער יוסף" --ref main
 """
 import argparse, json, sys
+from itertools import zip_longest
 from pathlib import Path
 
 TOOLS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS_DIR.parent
 sys.path.insert(0, str(TOOLS_DIR))
 import library
+import source_refs
 
 
 def resolve_dataset(value: str) -> Path:
@@ -58,13 +60,24 @@ def main():
         raise SystemExit(f"קובץ המקור הנעוץ: {why}")
     print("מושך:", library.raw_url(meta, args.ref))
     other = library.fetch(meta, args.ref)
-    old_lines = [library.norm(line) for line in pinned.decode("utf-8").split("\n")]
-    new_lines = [library.norm(line) for line in other.decode("utf-8").split("\n")]
+    old_raw_lines = pinned.decode("utf-8").split("\n")
+    new_raw_lines = other.decode("utf-8").split("\n")
+    old_lines = [library.norm(line) for line in old_raw_lines]
+    new_lines = [library.norm(line) for line in new_raw_lines]
+    old_refs = source_refs.line_references(old_raw_lines)
+    new_refs = source_refs.line_references(new_raw_lines)
     print(f"שורות בקומיט הנעוץ: {len(old_lines)}, ב-{args.ref}: {len(new_lines)}")
     if len(old_lines) != len(new_lines):
         print(f"הבדל במספר השורות: {len(new_lines) - len(old_lines):+d}. מספרי השורות בהמשך עלולים לזוז")
-    diff = [i + 1 for i, (old, new) in enumerate(zip(old_lines, new_lines)) if old != new]
-    print(f"שורות שונות: {len(diff)}", diff[:20])
+    missing = object()
+    diff = [
+        i + 1
+        for i, (old, new, old_ref, new_ref) in enumerate(
+            zip_longest(old_lines, new_lines, old_refs, new_refs, fillvalue=missing)
+        )
+        if old != new or old_ref != new_ref
+    ]
+    print(f"שורות שונות (כולל שינויי כותרות): {len(diff)}", diff[:20])
 
     touched = set()
     jsonl_path = directory / f"{name}.jsonl"
