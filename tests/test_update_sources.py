@@ -14,6 +14,7 @@ except ModuleNotFoundError:
     fake.get_pinned = lambda *a, **k: (None, "network disabled")
     sys.modules["library"] = fake
 import update_sources
+import source_refs
 
 
 class MappingTests(unittest.TestCase):
@@ -74,18 +75,33 @@ class MappingTests(unittest.TestCase):
             "<h3>סימן ב</h3>",
             "המשך",
         ]
+        references = source_refs.line_references(lines)
         self.assertEqual(
-            update_sources.reference_for_line(lines, 4, "כתר ראש"),
+            update_sources.reference_for_line(references, 4, "כתר ראש"),
             "הלכות ציצית > סימן א",
         )
         self.assertEqual(
-            update_sources.reference_for_line(lines, 6, "כתר ראש"),
+            update_sources.reference_for_line(references, 6, "כתר ראש"),
             "הלכות ציצית > סימן א > סעיף קטן א",
         )
         self.assertEqual(
-            update_sources.reference_for_line(lines, 8, "כתר ראש"),
+            update_sources.reference_for_line(references, 8, "כתר ראש"),
             "הלכות ציצית > סימן ב",
         )
+
+    def test_citation_span_checks_intermediate_heading(self):
+        lines = ["start quote", "middle", "end quote"]
+        row = {
+            "correct_line": "1-3",
+            "correct_quote": "start quote middle end quote",
+            "correct_ref": "",
+        }
+        refs = ["same", "intermediate", "same"]
+        with self.assertRaisesRegex(update_sources.UpdateProblem, "heading boundary"):
+            update_sources.map_citation(
+                row, "correct", lines, lines,
+                update_sources.line_map(lines, lines), "book", refs,
+            )
 
 
 
