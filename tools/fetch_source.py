@@ -5,7 +5,7 @@ Examples:
     python tools/fetch_source.py "datasets/שות/שו״ת שער יוסף"
     python tools/fetch_source.py "שו״ת שער יוסף" --ref main
 """
-import argparse, json, os, sys
+import argparse, json, os, re, sys
 from itertools import zip_longest
 from pathlib import Path
 
@@ -14,6 +14,7 @@ REPO_ROOT = TOOLS_DIR.parent
 sys.path.insert(0, str(TOOLS_DIR))
 import library
 import source_refs
+import validate
 
 
 def is_path_link(path: Path) -> bool:
@@ -121,6 +122,38 @@ def compare_source_lines(pinned: bytes, other: bytes):
     return old_lines, new_lines, diff
 
 
+def touched_query_ids(jsonl_path: Path, diff: list[int]) -> set[str]:
+    """Load a canonical dataset JSONL and return IDs whose citations overlap changed lines."""
+    touched: set[str] = set()
+    try:
+        with jsonl_path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                row = json.loads(line, object_pairs_hook=validate.unique_json_object)
+                if not isinstance(row, dict) or list(row.keys()) != validate.FIELDS:
+                    raise ValueError(f"JSONL row {line_number} does not match the 12-field schema")
+                if any(not isinstance(row[field], str) for field in validate.FIELDS):
+                    raise ValueError(f"JSONL row {line_number} contains a non-string field")
+                if not row["id"]:
+                    raise ValueError(f"JSONL row {line_number} has an empty ID")
+
+                for key in ("correct_line", "near_miss_line"):
+                    value = row[key]
+                    if not validate.LINE_RE.fullmatch(value):
+                        raise ValueError(f"invalid line range {value!r} at row {line_number}")
+                    start_text, _, end_text = value.partition("-")
+                    start = int(start_text)
+                    end = int(end_text or start_text)
+                    if start < 1 or end < start:
+                        raise ValueError(f"invalid line range {value!r} at row {line_number}")
+                    if any(start <= line_no <= end for line_no in diff):
+                        touched.add(row["id"])
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"קובץ השאילתות אינו תקין: {exc}") from exc
+    return touched
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dataset", help="dataset path, or unique book folder name")
@@ -158,27 +191,8 @@ def main():
         print(f"הבדל במספר השורות: {len(new_lines) - len(old_lines):+d}. מספרי השורות בהמשך עלולים לזוז")
     print(f"שורות שונות (כולל שינויי כותרות): {len(diff)}", diff[:20])
 
-    touched = set()
     jsonl_path = directory / f"{name}.jsonl"
-    try:
-        with jsonl_path.open(encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, 1):
-                if not line.strip():
-                    continue
-                row = json.loads(line, object_pairs_hook=unique_json_object)
-                if not isinstance(row, dict) or not isinstance(row.get("id"), str):
-                    raise ValueError(f"שורת JSONL {line_number} חייבת להיות אובייקט עם id")
-                for key in ("correct_line", "near_miss_line"):
-                    value = row.get(key)
-                    if not isinstance(value, str):
-                        raise ValueError(f"line field {key} is missing or not a string at row {line_number}")
-                    lo, _, hi = value.partition("-")
-                    if not lo.isdigit() or (hi and not hi.isdigit()):
-                        raise ValueError(f"invalid line range {value!r} at row {line_number}")
-                    if any(int(lo) <= line_no <= int(hi or lo) for line_no in diff):
-                        touched.add(row["id"])
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise SystemExit(f"קובץ השאילתות אינו תקין: {exc}") from exc
+    touched = touched_query_ids(jsonl_path, diff)
     if touched:
         print("שאילתות שהשורות שלהן השתנו:", sorted(touched))
     else:
