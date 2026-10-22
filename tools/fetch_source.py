@@ -5,7 +5,7 @@ Examples:
     python tools/fetch_source.py "datasets/שות/שו״ת שער יוסף"
     python tools/fetch_source.py "שו״ת שער יוסף" --ref main
 """
-import argparse, json, sys
+import argparse, json, os, sys
 from itertools import zip_longest
 from pathlib import Path
 
@@ -16,24 +16,84 @@ import library
 import source_refs
 
 
+def is_path_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def path_has_link_component(path: Path) -> Path | None:
+    path = Path(path).absolute()
+    for component in reversed((path, *path.parents)):
+        if is_path_link(component):
+            return component
+    return None
+
+
+def reject_link_tree(root: Path) -> None:
+    if path_has_link_component(root) is not None:
+        raise SystemExit(f"נתיב המערך מכיל symlink או junction: {root}")
+    for current, dirs, files in os.walk(root, followlinks=False):
+        base = Path(current)
+        for name in list(dirs):
+            candidate = base / name
+            if is_path_link(candidate):
+                raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
+        for name in files:
+            candidate = base / name
+            if is_path_link(candidate):
+                raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
 def resolve_dataset(value: str) -> Path:
-    candidate = Path(value)
-    if not candidate.is_absolute():
-        candidate = (REPO_ROOT / candidate).resolve()
+    supplied = Path(value)
+    candidate = supplied if supplied.is_absolute() else REPO_ROOT / supplied
+    candidate = Path(os.path.abspath(candidate))
+    if path_has_link_component(candidate) is not None:
+        raise SystemExit(f"נתיב המערך מכיל symlink או junction: {candidate}")
+    try:
+        candidate.resolve(strict=True).relative_to(REPO_ROOT.resolve(strict=True))
+    except (OSError, ValueError):
+        # Name-only lookups are allowed below, but explicit paths outside the
+        # repository are never accepted.
+        if supplied.is_absolute() or (len(supplied.parts) > 1):
+            raise SystemExit("נתיב המערך חייב להיות בתוך המאגר")
+
     if candidate.is_dir() and (candidate / f"{candidate.name}.מקור.json").is_file():
-        return candidate
+        reject_link_tree(candidate)
+        meta_path = candidate / f"{candidate.name}.מקור.json"
+        if is_path_link(meta_path) or not meta_path.is_file():
+            raise SystemExit(f"קובץ המקור חסר או אינו קובץ רגיל: {meta_path}")
+        return candidate.resolve(strict=True)
 
     matches = []
     for root_name in ("datasets", "drafts"):
         root = REPO_ROOT / root_name
+        if is_path_link(root):
+            raise SystemExit(f"תיקיית {root_name} אינה יכולה להיות symlink או junction")
         if root.exists():
-            matches.extend(
-                path.parent for path in root.rglob("*.מקור.json")
-                if path.parent.name == value
-            )
+            for current, dirs, files in os.walk(root, followlinks=False):
+                base = Path(current)
+                dirs[:] = [name for name in dirs if not is_path_link(base / name)]
+                for name in files:
+                    if not name.endswith(".מקור.json") or is_path_link(base / name):
+                        continue
+                    if base.name == value:
+                        matches.append(base)
     matches = sorted(set(matches))
     if len(matches) == 1:
-        return matches[0]
+        reject_link_tree(matches[0])
+        return matches[0].resolve(strict=True)
     if len(matches) > 1:
         raise SystemExit(f"שם ספר עמום; ספק נתיב מלא. נמצאו: {matches}")
     raise SystemExit(f"לא נמצא מערך בשם או בנתיב: {value}")
@@ -45,15 +105,18 @@ def compare_source_lines(pinned: bytes, other: bytes):
     new_raw_lines = other.decode("utf-8").split("\n")
     old_lines = [library.norm(line) for line in old_raw_lines]
     new_lines = [library.norm(line) for line in new_raw_lines]
-    old_refs = source_refs.line_references(old_raw_lines)
-    new_refs = source_refs.line_references(new_raw_lines)
+    old_refs, old_sections = source_refs.line_reference_data(old_raw_lines)
+    new_refs, new_sections = source_refs.line_reference_data(new_raw_lines)
     missing = object()
     diff = [
         i + 1
-        for i, (old, new, old_ref, new_ref) in enumerate(
-            zip_longest(old_lines, new_lines, old_refs, new_refs, fillvalue=missing)
+        for i, (old, new, old_ref, new_ref, old_section, new_section) in enumerate(
+            zip_longest(
+                old_lines, new_lines, old_refs, new_refs, old_sections, new_sections,
+                fillvalue=missing,
+            )
         )
-        if old != new or old_ref != new_ref
+        if old != new or old_ref != new_ref or old_section != new_section
     ]
     return old_lines, new_lines, diff
 
@@ -67,8 +130,13 @@ def main():
     directory = resolve_dataset(args.dataset)
     name = directory.name
     meta_path = directory / f"{name}.מקור.json"
-    with meta_path.open(encoding="utf-8") as handle:
-        meta = json.load(handle)
+    try:
+        with meta_path.open(encoding="utf-8") as handle:
+            meta = json.load(handle, object_pairs_hook=unique_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"קובץ המטא־נתונים אינו תקין: {exc}") from exc
+    if not isinstance(meta, dict):
+        raise SystemExit("קובץ המטא־נתונים חייב להכיל אובייקט JSON")
     try:
         library.validate_source_origin(meta)
     except (KeyError, TypeError, ValueError) as exc:
@@ -92,15 +160,25 @@ def main():
 
     touched = set()
     jsonl_path = directory / f"{name}.jsonl"
-    with jsonl_path.open(encoding="utf-8") as handle:
-        for line in handle:
-            if not line.strip():
-                continue
-            row = json.loads(line)
-            for key in ("correct_line", "near_miss_line"):
-                lo, _, hi = row[key].partition("-")
-                if any(int(lo) <= line_no <= int(hi or lo) for line_no in diff):
-                    touched.add(row["id"])
+    try:
+        with jsonl_path.open(encoding="utf-8") as handle:
+            for line_number, line in enumerate(handle, 1):
+                if not line.strip():
+                    continue
+                row = json.loads(line, object_pairs_hook=unique_json_object)
+                if not isinstance(row, dict) or not isinstance(row.get("id"), str):
+                    raise ValueError(f"שורת JSONL {line_number} חייבת להיות אובייקט עם id")
+                for key in ("correct_line", "near_miss_line"):
+                    value = row.get(key)
+                    if not isinstance(value, str):
+                        raise ValueError(f"line field {key} is missing or not a string at row {line_number}")
+                    lo, _, hi = value.partition("-")
+                    if not lo.isdigit() or (hi and not hi.isdigit()):
+                        raise ValueError(f"invalid line range {value!r} at row {line_number}")
+                    if any(int(lo) <= line_no <= int(hi or lo) for line_no in diff):
+                        touched.add(row["id"])
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+        raise SystemExit(f"קובץ השאילתות אינו תקין: {exc}") from exc
     if touched:
         print("שאילתות שהשורות שלהן השתנו:", sorted(touched))
     else:
