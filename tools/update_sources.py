@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -31,6 +32,19 @@ API = "https://api.github.com"
 
 class UpdateProblem(Exception):
     """Raised when a source cannot be updated without guessing."""
+
+
+class DuplicateJSONKeyError(ValueError):
+    """Raised when JSON contains an ambiguous duplicate object key."""
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONKeyError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
 
 
 def is_path_link(path: Path) -> bool:
@@ -204,8 +218,8 @@ def read_rows(path: Path) -> list[dict[str, str]]:
             if not line.strip():
                 continue
             try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
+                row = json.loads(line, object_pairs_hook=unique_json_object)
+            except (json.JSONDecodeError, DuplicateJSONKeyError) as exc:
                 raise UpdateProblem(f"invalid JSONL line {number}: {exc}") from exc
             if not isinstance(row, dict) or list(row) != FIELDS:
                 raise UpdateProblem(f"JSONL line {number} does not match the 12-field schema")
@@ -218,16 +232,107 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 
 
 def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: dict) -> None:
-    with (directory / f"{name}.jsonl").open("w", encoding="utf-8", newline="\n") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    with (directory / f"{name}.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\r\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    with (directory / f"{name}.מקור.json").open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    """Stage all output files first and roll back if any replacement fails."""
+    reject_symlink_tree(directory)
+    jsonl_text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+    csv_buffer = __import__("io").StringIO(newline="")
+    writer = csv.DictWriter(csv_buffer, fieldnames=FIELDS, lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(rows)
+
+    metadata_text = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
+    targets = [
+        (directory / f"{name}.jsonl", jsonl_text.encode("utf-8")),
+        (directory / f"{name}.csv", ("\ufeff" + csv_buffer.getvalue()).encode("utf-8")),
+        (directory / f"{name}.מקור.json", metadata_text.encode("utf-8")),
+    ]
+    originals: dict[Path, bytes] = {}
+    staged: dict[Path, Path] = {}
+    replaced: list[Path] = []
+
+    try:
+        # Capture every original before replacing any file. Refuse symlinked or
+        # non-regular targets rather than reading/writing through a redirect.
+        for target, _ in targets:
+            if is_path_link(target):
+                raise UpdateProblem(f"refusing to replace symlink/junction: {target}")
+            info = target.lstat()
+            if not os.path.isfile(target) or not __import__("stat").S_ISREG(info.st_mode):
+                raise UpdateProblem(f"required output is not a regular file: {target}")
+            fd = os.open(target, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                opened = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    raise UpdateProblem(f"output changed while opening: {target}")
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                after = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+                ):
+                    raise UpdateProblem(f"output changed while reading: {target}")
+                originals[target] = b"".join(chunks)
+            finally:
+                os.close(fd)
+
+        # Build all replacement files on the same filesystem and fsync before
+        # any canonical dataset path changes.
+        for target, payload in targets:
+            fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=directory)
+            temp = Path(temp_name)
+            staged[target] = temp
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+
+        reject_symlink_tree(directory)
+        for target, _ in targets:
+            if is_path_link(target):
+                raise UpdateProblem(f"output became a symlink/junction during refresh: {target}")
+            os.replace(staged[target], target)
+            replaced.append(target)
+        # Persist directory entry updates where supported.
+        try:
+            directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    except Exception as exc:
+        rollback_errors = []
+        for target in reversed(replaced):
+            try:
+                fd, restore_name = tempfile.mkstemp(
+                    prefix=f".{target.name}.rollback.", suffix=".tmp", dir=directory
+                )
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(originals[target])
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(restore_name, target)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        if rollback_errors:
+            raise UpdateProblem(
+                f"dataset refresh failed ({exc}); rollback also failed for: " + "; ".join(rollback_errors)
+            ) from exc
+        if isinstance(exc, UpdateProblem):
+            raise
+        raise UpdateProblem(f"dataset refresh failed; original files restored: {exc}") from exc
+    finally:
+        for temp in staged.values():
+            try:
+                temp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
@@ -237,7 +342,10 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     jsonl_path = directory / f"{name}.jsonl"
     if not meta_path.is_file() or not jsonl_path.is_file() or not (directory / f"{name}.csv").is_file():
         raise UpdateProblem("required JSONL, CSV, or source metadata file is missing")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"), object_pairs_hook=unique_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, DuplicateJSONKeyError) as exc:
+        raise UpdateProblem(f"source metadata is not valid JSON: {exc}") from exc
     expected = library.SOURCE_META_KEYS
     if not isinstance(meta, dict) or set(meta) != expected or meta.get("book_name") != name:
         raise UpdateProblem("source metadata does not match the expected schema")
