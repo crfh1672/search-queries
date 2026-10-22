@@ -11,7 +11,7 @@
 שלב 3: חישוב:
     python tools/score.py results.csv
 """
-import argparse, csv, glob, json, os, collections
+import argparse, csv, glob, json, os, collections, sys
 
 
 def load_data(data_dir="datasets"):
@@ -21,6 +21,11 @@ def load_data(data_dir="datasets"):
     pattern = os.path.join(data_dir, "*", "*", "*.jsonl")
     for p in sorted(glob.glob(pattern)):
         if os.path.basename(p) != os.path.basename(os.path.dirname(p)) + ".jsonl":
+            print(
+                f"Warning: ignoring non-canonical JSONL file {p!r}; "
+                "expected the file name to match its book directory",
+                file=sys.stderr,
+            )
             continue
         with open(p, encoding="utf-8") as f:
             for line in f:
