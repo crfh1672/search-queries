@@ -1,53 +1,48 @@
-"""Build exact, hierarchical references from Otzaria's book headings.
+"""Build the same human-readable heading paths used by Otzaria's TOC.
 
-Otzaria TXT books use one physical line per content unit and headings such as
-<h1>Book</h1> and <h2>/<h3>/... for the table of contents. References here are
-the visible heading path at a source line, not a Talmud-specific folio parser.
+Otzaria treats a physical line beginning with <h1>...<h6> as a heading.
+Its TOC title is the whole line with markup removed, not only the text between
+opening and closing heading tags. Keep this behavior so stored references match
+what users see in Otzaria.
 """
 from __future__ import annotations
 
-import html
 import re
 
-import library  # imported from tools/ via the repository's scripts
+import library
 
-HTML_HEADING_RE = re.compile(
-    r"^\s*<h([1-6])\b[^>]*>(.*?)</h\1>\s*$", re.IGNORECASE
-)
+HTML_HEADING_START_RE = re.compile(r"^\s*<h([1-6])\b([^>]*)", re.IGNORECASE)
+TOC_EXCLUDE_RE = re.compile(r'\bdata-toc\s*=\s*["\']none["\']', re.IGNORECASE)
 MARKDOWN_HEADING_RE = re.compile(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$")
-TAG_RE = re.compile(r"<[^>]*>")
 
 
 def heading(line: str) -> tuple[int, str] | None:
-    """Return (level, visible title) for a whole-line HTML/Markdown heading."""
-    match = HTML_HEADING_RE.match(line)
+    """Return (level, visible title); excluded headings do not change the TOC path."""
+    match = HTML_HEADING_START_RE.match(line)
     if match:
+        attrs = match.group(2)
+        if TOC_EXCLUDE_RE.search(attrs):
+            return None
         level = int(match.group(1))
-        title = html.unescape(TAG_RE.sub("", match.group(2)))
-        title = library.norm(title)
+        # Otzaria's parser extracts the complete line's text after stripping markup.
+        title = library.norm(line)
         if not title:
             raise ValueError("empty heading")
         return level, title
 
-    # Otzaria can recognize Markdown headings, although HTML headings are preferred.
+    # Markdown headings are recognized by Otzaria, though markup is visible there.
     match = MARKDOWN_HEADING_RE.match(line)
     if match:
         level = len(match.group(1))
         title_text = library.norm(match.group(2))
         if not title_text:
             raise ValueError("empty heading")
-        # The hash marks are retained because Otzaria's TOC parser retains them too.
         return level, ("#" * level) + " " + title_text
     return None
 
 
 def line_references(lines: list[str]) -> list[str]:
-    """Return a stable human-readable heading path for every 1-based source line.
-
-    The <h1> book title is represented by metadata and omitted from the section
-    path. A gap in heading levels intentionally starts a new path, matching the
-    hierarchy rules documented by Otzaria's TOC parser.
-    """
+    """Return the active TOC heading path for every physical source line."""
     stack: dict[int, tuple[str, ...]] = {}
     references: list[str] = []
 
@@ -55,7 +50,9 @@ def line_references(lines: list[str]) -> list[str]:
         try:
             parsed = heading(line)
         except ValueError as exc:
-            raise ValueError(f"malformed heading at source line {number}: {line!r}") from exc
+            raise ValueError(
+                f"malformed heading at source line {number}: {line!r}"
+            ) from exc
 
         if parsed is not None:
             level, title = parsed
