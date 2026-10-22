@@ -108,25 +108,28 @@ def locate_quote(old: list[str], new: list[str], quote: str,
     raise UpdateProblem(f"quote has {len(hits)} possible new locations")
 
 
-def reference_for_line(lines: list[str], line_no: int, book_name: str) -> str:
-    """Return the exact heading path used by the Otzaria book's table of contents."""
-    try:
-        return source_refs.reference_at_line(lines, line_no)
-    except ValueError as exc:
-        raise UpdateProblem(str(exc)) from exc
+def reference_for_line(references: list[str], line_no: int, book_name: str) -> str:
+    """Return a precomputed heading path for a 1-based source line."""
+    if line_no < 1 or line_no > len(references):
+        raise UpdateProblem(
+            f"{book_name}: line {line_no} is outside source (1-{len(references)})"
+        )
+    return references[line_no - 1]
 
 
 def map_citation(
     row: dict[str, str], prefix: str, old: list[str], new: list[str],
-    mapping: dict[int, int], book_name: str,
-    reference_lines: list[str] | None = None,
+    mapping: dict[int, int], book_name: str, references: list[str],
 ) -> None:
     line_key, quote_key, ref_key = f"{prefix}_line", f"{prefix}_quote", f"{prefix}_ref"
     start, end = locate_quote(old, new, row[quote_key], parse_span(row[line_key]), mapping)
-    ref_source = reference_lines if reference_lines is not None else new
-    ref = reference_for_line(ref_source, start, book_name)
-    if reference_for_line(ref_source, end, book_name) != ref:
-        raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary")
+    # The endpoints alone are not sufficient: a nested/intermediate heading can
+    # make a span leave and later return to the same textual reference.
+    reference_for_line(references, start, book_name)
+    try:
+        ref = source_refs.span_reference(references, start, end)
+    except ValueError as exc:
+        raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary: {exc}") from exc
     row[line_key] = str(start) if start == end else f"{start}-{end}"
     row[ref_key] = ref
 
@@ -140,18 +143,9 @@ def ensure_citations_do_not_overlap(row: dict[str, str]) -> None:
         )
 
 
-def repo_slug(url: str) -> str:
-    parsed = urllib.parse.urlparse(url if "://" in url else f"https://github.com/{url}")
-    if parsed.hostname not in {"github.com", "www.github.com"}:
-        raise UpdateProblem("origin_repo must point to github.com")
-    parts = [p for p in parsed.path.strip("/").split("/") if p]
-    if len(parts) < 2:
-        raise UpdateProblem(f"cannot parse repository from {url!r}")
-    return f"{parts[0]}/{parts[1].removesuffix('.git')}"
-
-
 def latest_commit(meta: dict, ref: str) -> str:
-    slug = repo_slug(meta["origin_repo"])
+    # validate_source_origin has already enforced the canonical repository URL.
+    slug = library.repo_slug(meta["origin_repo"])
     query = urllib.parse.urlencode({"path": meta["origin_path"], "sha": ref, "per_page": "1"})
     request = urllib.request.Request(
         f"{API}/repos/{slug}/commits?{query}",
@@ -230,14 +224,17 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     if problem or old_raw is None:
         raise UpdateProblem(f"cannot load pinned source: {problem or 'unknown error'}")
     old, new = normalized_lines(old_raw), normalized_lines(new_raw)
-    old_reference_lines = old_raw.decode("utf-8").split("\n")
     new_reference_lines = new_raw.decode("utf-8").split("\n")
+    try:
+        new_references = source_refs.line_references(new_reference_lines)
+    except ValueError as exc:
+        raise UpdateProblem(f"candidate source headings are invalid: {exc}") from exc
     mapping, rows, issues = line_map(old, new), read_rows(jsonl_path), []
     for row in rows:
         original = dict(row)
         try:
-            map_citation(row, "correct", old, new, mapping, name, new_reference_lines)
-            map_citation(row, "near_miss", old, new, mapping, name, new_reference_lines)
+            map_citation(row, "correct", old, new, mapping, name, new_references)
+            map_citation(row, "near_miss", old, new, mapping, name, new_references)
             ensure_citations_do_not_overlap(row)
             row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
