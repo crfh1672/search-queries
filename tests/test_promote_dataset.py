@@ -103,6 +103,17 @@ class PromotePathSafetyTests(unittest.TestCase):
         self.assertTrue(draft.exists())
         self.assertIn("היעד כבר קיים", stderr)
 
+    def test_mismatched_draft_category_is_refused_even_if_validator_is_stubbed(self):
+        draft = self.create_draft()
+        meta_path = draft / "ספר.מקור.json"
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        meta["source_category"] = "מדרש"
+        meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+        result, _, stderr = self.run_promotion(draft)
+        self.assertEqual(result, 1)
+        self.assertTrue(draft.exists())
+        self.assertIn("does not match", stderr)
+
     def test_path_based_rename_fallback_promotes_successfully(self):
         draft = self.create_draft()
         with patch.object(promote_dataset, "source_files_supported_by_dir_fd", return_value=False):
