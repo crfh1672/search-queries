@@ -16,11 +16,17 @@ import argparse, csv, glob, json, os, collections
 
 def load_data(data_dir="datasets"):
     rows = {}
-    for p in glob.glob(os.path.join(data_dir, "**", "*.jsonl"), recursive=True):
+    # Only load the canonical file at datasets/<category>/<book>/<book>.jsonl.
+    # Ignore nested examples, backups, and any alternate JSONL files.
+    pattern = os.path.join(data_dir, "*", "*", "*.jsonl")
+    for p in sorted(glob.glob(pattern)):
+        if os.path.basename(p) != os.path.basename(os.path.dirname(p)) + ".jsonl":
+            continue
         with open(p, encoding="utf-8") as f:
             for line in f:
                 if line.strip():
-                    r = json.loads(line); rows[r["id"]] = r
+                    r = json.loads(line)
+                    rows[r["id"]] = r
     return rows
 
 
