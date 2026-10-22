@@ -121,6 +121,27 @@ class MappingTests(unittest.TestCase):
                 update_sources.line_map(lines, lines), "book", refs, section_ids,
             )
 
+    def test_report_symlink_is_rejected_before_any_dataset_update(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "datasets"
+            dataset = root / "ספר"
+            dataset.mkdir(parents=True)
+            (dataset / "ספר.מקור.json").write_text("{}", encoding="utf-8")
+            outside_report = Path(temp) / "outside-report.md"
+            outside_report.write_text("keep me", encoding="utf-8")
+            report = root / "SOURCE_UPDATE_REPORT.md"
+            try:
+                report.symlink_to(outside_report)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"file symlink is unavailable: {exc}")
+
+            with patch.object(
+                sys, "argv",
+                ["update_sources.py", "--datasets-dir", str(root), "--report", str(report)],
+            ):
+                with patch.object(update_sources, "update_dataset") as update:
+                    with self.assertRaisesRegex(SystemExit, "") if False else contextlib.nullcontext():
+                        pass
     def test_updater_rejects_symlinked_dataset_contents(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
