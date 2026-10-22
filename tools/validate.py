@@ -136,7 +136,7 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     try:
         raw_lines = [line.rstrip("\r") for line in data.decode("utf-8").split("\n")]
         lines = [library.norm(line) for line in raw_lines]
-        refs = source_refs.line_references(raw_lines)
+        refs, section_ids = source_refs.line_reference_data(raw_lines)
     except (UnicodeDecodeError, ValueError) as exc:
         err(f"קובץ המקור או הכותרות אינם תקינים: {exc}")
         return errs
@@ -209,7 +209,14 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
             expected_ref = refs[a - 1]
             if ref != expected_ref:
                 err(f"{w}: {which}_ref אינו תואם למסלול הכותרות בשורה {a} ({ref!r} במקום {expected_ref!r})")
-            crossed = next((ln for ln in range(a + 1, b + 1) if refs[ln - 1] != expected_ref), None)
+            expected_section = section_ids[a - 1]
+            crossed = next(
+                (
+                    ln for ln in range(a + 1, b + 1)
+                    if refs[ln - 1] != expected_ref or section_ids[ln - 1] != expected_section
+                ),
+                None,
+            )
             if crossed is not None:
                 err(f"{w}: {which}_line {line_s} חוצה גבול כותרת בשורה {crossed}")
             seg = lines[a - 1:b]
