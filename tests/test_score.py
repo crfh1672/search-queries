@@ -17,7 +17,7 @@ class ScoreInputTests(unittest.TestCase):
     def test_score_rejects_results_without_rows(self):
         with tempfile.TemporaryDirectory() as temp:
             results = Path(temp) / "results.csv"
-            results.write_text("id,type,query,smart_rank,lexical_rank\\n", encoding="utf-8")
+            results.write_text("id,type,query,smart_rank,lexical_rank\n", encoding="utf-8")
             with patch.object(sys, "argv", ["score.py", str(results)]):
                 with contextlib.redirect_stderr(io.StringIO()):
                     with self.assertRaises(SystemExit) as cm:
@@ -28,7 +28,7 @@ class ScoreInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             results = Path(temp) / "results.csv"
             results.write_text(
-                "id,type,query,smart_rank,lexical_rank\\nbook-001,short,q,0,1\\n",
+                "id,type,query,smart_rank,lexical_rank\nbook-001,short,q,0,1\n",
                 encoding="utf-8",
             )
             with patch.object(sys, "argv", ["score.py", str(results)]):
@@ -42,7 +42,7 @@ class ScoreInputTests(unittest.TestCase):
             book = Path(temp) / "הלכה" / "ספר"
             book.mkdir(parents=True)
             (book / "ספר.jsonl").write_text(
-                '{"id":"book-001","type":"short","query":"valid"}\\nnot-json\\n',
+                '{"id":"book-001","type":"short","query":"valid"}\nnot-json\n',
                 encoding="utf-8",
             )
             stderr = io.StringIO()
@@ -58,7 +58,7 @@ class ScoreInputTests(unittest.TestCase):
             category = actual / "הלכה" / "ספר"
             category.mkdir(parents=True)
             (category / "ספר.jsonl").write_text(
-                '{"id":"book-001","type":"short","query":"query"}\\n',
+                '{"id":"book-001","type":"short","query":"query"}\n',
                 encoding="utf-8",
             )
             link = Path(temp) / "linked"
