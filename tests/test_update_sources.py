@@ -103,6 +103,21 @@ class MappingTests(unittest.TestCase):
                 update_sources.line_map(lines, lines), "book", refs,
             )
 
+    def test_citation_span_checks_repeated_heading_with_same_path(self):
+        lines = ["start quote", "middle", "end quote"]
+        row = {
+            "correct_line": "1-3",
+            "correct_quote": "start quote middle end quote",
+            "correct_ref": "",
+        }
+        refs = ["same", "same", "same"]
+        section_ids = [10, 10, 11]
+        with self.assertRaisesRegex(update_sources.UpdateProblem, "heading boundary"):
+            update_sources.map_citation(
+                row, "correct", lines, lines,
+                update_sources.line_map(lines, lines), "book", refs, section_ids,
+            )
+
 
 
 if __name__ == "__main__":
