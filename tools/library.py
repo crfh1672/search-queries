@@ -1,5 +1,5 @@
 """גישה לקובצי ספרים ב-Otzaria, עם pin לקומיט ול-hash ולנירמול אחיד."""
-import hashlib, os, re, tempfile, urllib.parse, urllib.request
+import hashlib, os, re, stat, tempfile, urllib.parse, urllib.request
 from pathlib import Path, PurePosixPath
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
@@ -137,7 +137,7 @@ def read_cache_file(path, expected_hash):
         return None
     try:
         info = os.fstat(fd)
-        if not __import__("stat").S_ISREG(info.st_mode):
+        if not stat.S_ISREG(info.st_mode):
             return None
         chunks = []
         while True:
