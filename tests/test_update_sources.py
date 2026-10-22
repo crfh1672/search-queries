@@ -132,7 +132,7 @@ class MappingTests(unittest.TestCase):
                 (dataset / "linked.txt").symlink_to(outside)
             except (OSError, NotImplementedError) as exc:
                 self.skipTest(f"file symlink is unavailable: {exc}")
-            with self.assertRaisesRegex(update_sources.UpdateProblem, "symlink או junction"):
+            with self.assertRaisesRegex(update_sources.UpdateProblem, "symlink or junction"):
                 update_sources.reject_symlink_tree(dataset)
 
     def test_read_rows_rejects_duplicate_json_keys(self):
