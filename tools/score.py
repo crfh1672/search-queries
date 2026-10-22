@@ -79,7 +79,7 @@ def load_data(data_dir="datasets"):
                             raise ValueError(f"{p}:{line_number}: invalid split {r['split']!r}")
                         if r["near_miss_same_section"] not in validate.YESNO:
                             raise ValueError(f"{p}:{line_number}: invalid near-miss section flag")
-                        if r["verified_by_human"] == "":
+                        if not r["verified_by_human"].strip():
                             raise ValueError(f"{p}:{line_number}: approved dataset lacks human verification")
                         if r["correct_quote"] == r["near_miss_quote"]:
                             raise ValueError(f"{p}:{line_number}: correct and near-miss quotes are identical")
