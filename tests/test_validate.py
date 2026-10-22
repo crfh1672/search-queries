@@ -265,7 +265,7 @@ class SourceChecks(Base):
         target = os.path.join(root, "ספר שהונח ברמה שגויה")
         os.makedirs(target)
         with open(os.path.join(target, "ספר שהונח ברמה שגויה.jsonl"), "w", encoding="utf-8") as handle:
-            handle.write("{}\\n")
+            handle.write("{}\n")
         self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
 
 
