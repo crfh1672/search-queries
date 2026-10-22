@@ -60,6 +60,23 @@ class Valid(Base):
         self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
         self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
+    def test_skipped_heading_level_keeps_nearest_ancestor(self):
+        refs = source_refs.line_references([
+            "<h1>ספר</h1>",
+            "<h2>A</h2>",
+            "<h4>B</h4>",
+            "body",
+        ])
+        self.assertEqual(refs[2], "A > B")
+        self.assertEqual(refs[3], "A > B")
+
+    def test_heading_reference_preserves_visible_title(self):
+        refs = source_refs.line_references([
+            "<h2>שֵׁם יהוה ״</h2>",
+            "body",
+        ])
+        self.assertEqual(refs[0], "שֵׁם יהוה ״")
+
     def test_malformed_empty_heading_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "malformed heading at source line 3"):
             source_refs.line_references([
@@ -236,6 +253,12 @@ class SourceChecks(Base):
             self.d, loader=lambda d, m: (self.lib, None), require_verified=True
         )
         self.assertTrue(any("מערך מאושר חייב לכלול verified_by_human" in e for e in errs))
+
+    def test_dataset_discovery_includes_book_folder_without_metadata(self):
+        root = os.path.join(self.tmp, "datasets")
+        target = os.path.join(root, "הלכה", "ספר בלי מטא")
+        os.makedirs(target)
+        self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
 
 
 
