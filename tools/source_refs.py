@@ -12,9 +12,9 @@ import re
 import library  # imported from tools/ via the repository's scripts
 
 HTML_HEADING_RE = re.compile(
-    r"^\\s*<h([1-6])\\b[^>]*>(.*?)</h\\1>\\s*$", re.IGNORECASE
+    r"^\s*<h([1-6])\b[^>]*>(.*?)</h\1>\s*$", re.IGNORECASE
 )
-MARKDOWN_HEADING_RE = re.compile(r"^\\s*(#{1,6})\\s+(.+?)\\s*#*\\s*$")
+MARKDOWN_HEADING_RE = re.compile(r"^\s*(#{1,6})\s+(.+?)\s*#*\s*$")
 TAG_RE = re.compile(r"<[^>]*>")
 
 
