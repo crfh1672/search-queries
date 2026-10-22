@@ -7,10 +7,13 @@ import bisect
 import csv
 import difflib
 import hashlib
+import io
 import json
 import os
 import re
+import stat
 import sys
+import tempfile
 import urllib.parse
 import urllib.request
 from pathlib import Path
@@ -18,19 +21,43 @@ from pathlib import Path
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 import library  # noqa: E402
+import source_refs  # noqa: E402
+import validate  # noqa: E402
 
 FIELDS = [
     "id", "query", "type", "correct_ref", "correct_quote", "correct_line",
     "near_miss_ref", "near_miss_quote", "near_miss_line",
-    "near_miss_same_amud", "split", "verified_by_human",
+    "near_miss_same_section", "split", "verified_by_human",
 ]
-HEADER_RE = re.compile(r'^\s*דף ([א-ת"״׳\']+)([.:])\s*$')
 LINE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
 API = "https://api.github.com"
 
 
 class UpdateProblem(Exception):
     """Raised when a source cannot be updated without guessing."""
+
+
+def path_has_link_component(path: Path) -> Path | None:
+    path = Path(path).absolute()
+    for component in reversed((path, *path.parents)):
+        if library.is_path_link(component):
+            return component
+    return None
+
+
+def reject_symlink_tree(directory: Path) -> None:
+    if path_has_link_component(directory) is not None:
+        raise UpdateProblem(f"dataset path contains a symlink or junction: {directory}")
+    for current, dirs, files in os.walk(directory, followlinks=False):
+        base = Path(current)
+        for name in list(dirs):
+            candidate = base / name
+            if library.is_path_link(candidate):
+                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
+        for name in files:
+            candidate = base / name
+            if library.is_path_link(candidate):
+                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
 
 
 def normalized_lines(raw: bytes) -> list[str]:
@@ -108,34 +135,29 @@ def locate_quote(old: list[str], new: list[str], quote: str,
     raise UpdateProblem(f"quote has {len(hits)} possible new locations")
 
 
-def reference_for_line(lines: list[str], line_no: int, masechet: str) -> str:
-    current = None
-    for number, line in enumerate(lines, 1):
-        if number > line_no:
-            break
-        match = HEADER_RE.match(line)
-        if match:
-            raw_daf, punctuation = match.groups()
-            # Match the repository validator's normalized reference format:
-            # Hebrew numeral punctuation (geresh/gershayim) is omitted from refs.
-            daf = re.sub(r"""["״׳']""", "", raw_daf)
-            if re.fullmatch(r"[א-ת]+", daf):
-                current = (daf, "א" if punctuation == "." else "ב")
-            else:
-                raise UpdateProblem(f"unrecognized page heading at source line {number}: {line}")
-    if current is None:
-        raise UpdateProblem(f"no recognizable page heading before line {line_no}")
-    daf, amud = current
-    return f'{masechet} {daf} ע"{amud}'
+def reference_for_line(references: list[str], line_no: int, book_name: str) -> str:
+    """Return a precomputed heading path for a 1-based source line."""
+    if line_no < 1 or line_no > len(references):
+        raise UpdateProblem(
+            f"{book_name}: line {line_no} is outside source (1-{len(references)})"
+        )
+    return references[line_no - 1]
 
 
-def map_citation(row: dict[str, str], prefix: str, old: list[str],
-                 new: list[str], mapping: dict[int, int], masechet: str) -> None:
+def map_citation(
+    row: dict[str, str], prefix: str, old: list[str], new: list[str],
+    mapping: dict[int, int], book_name: str, references: list[str],
+    section_ids: list[int] | None = None,
+) -> None:
     line_key, quote_key, ref_key = f"{prefix}_line", f"{prefix}_quote", f"{prefix}_ref"
     start, end = locate_quote(old, new, row[quote_key], parse_span(row[line_key]), mapping)
-    ref = reference_for_line(new, start, masechet)
-    if reference_for_line(new, end, masechet) != ref:
-        raise UpdateProblem(f"{prefix} quote crosses a page-side boundary")
+    # The endpoints alone are not sufficient: a nested/intermediate heading can
+    # make a span leave and later return to the same textual reference.
+    reference_for_line(references, start, book_name)
+    try:
+        ref = source_refs.span_reference(references, start, end, section_ids)
+    except ValueError as exc:
+        raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary: {exc}") from exc
     row[line_key] = str(start) if start == end else f"{start}-{end}"
     row[ref_key] = ref
 
@@ -149,18 +171,9 @@ def ensure_citations_do_not_overlap(row: dict[str, str]) -> None:
         )
 
 
-def repo_slug(url: str) -> str:
-    parsed = urllib.parse.urlparse(url if "://" in url else f"https://github.com/{url}")
-    if parsed.hostname not in {"github.com", "www.github.com"}:
-        raise UpdateProblem("origin_repo must point to github.com")
-    parts = [p for p in parsed.path.strip("/").split("/") if p]
-    if len(parts) < 2:
-        raise UpdateProblem(f"cannot parse repository from {url!r}")
-    return f"{parts[0]}/{parts[1].removesuffix('.git')}"
-
-
 def latest_commit(meta: dict, ref: str) -> str:
-    slug = repo_slug(meta["origin_repo"])
+    # validate_source_origin has already enforced the canonical repository URL.
+    slug = library.repo_slug(meta["origin_repo"])
     query = urllib.parse.urlencode({"path": meta["origin_path"], "sha": ref, "per_page": "1"})
     request = urllib.request.Request(
         f"{API}/repos/{slug}/commits?{query}",
@@ -188,8 +201,8 @@ def read_rows(path: Path) -> list[dict[str, str]]:
             if not line.strip():
                 continue
             try:
-                row = json.loads(line)
-            except json.JSONDecodeError as exc:
+                row = json.loads(line, object_pairs_hook=validate.unique_json_object)
+            except (json.JSONDecodeError, validate.DuplicateJSONKeyError) as exc:
                 raise UpdateProblem(f"invalid JSONL line {number}: {exc}") from exc
             if not isinstance(row, dict) or list(row) != FIELDS:
                 raise UpdateProblem(f"JSONL line {number} does not match the 12-field schema")
@@ -202,29 +215,134 @@ def read_rows(path: Path) -> list[dict[str, str]]:
 
 
 def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: dict) -> None:
-    with (directory / f"{name}.jsonl").open("w", encoding="utf-8", newline="\n") as f:
-        for row in rows:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
-    with (directory / f"{name}.csv").open("w", encoding="utf-8-sig", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=FIELDS, lineterminator="\r\n")
-        writer.writeheader()
-        writer.writerows(rows)
-    with (directory / f"{name}.מקור.json").open("w", encoding="utf-8", newline="\n") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    """Stage all output files first and roll back if any replacement fails."""
+    reject_symlink_tree(directory)
+    jsonl_text = "".join(json.dumps(row, ensure_ascii=False) + "\n" for row in rows)
+
+    csv_buffer = io.StringIO(newline="")
+    writer = csv.DictWriter(csv_buffer, fieldnames=FIELDS, lineterminator="\r\n")
+    writer.writeheader()
+    writer.writerows(rows)
+
+    metadata_text = json.dumps(meta, ensure_ascii=False, indent=2) + "\n"
+    targets = [
+        (directory / f"{name}.jsonl", jsonl_text.encode("utf-8")),
+        (directory / f"{name}.csv", ("\ufeff" + csv_buffer.getvalue()).encode("utf-8")),
+        (directory / f"{name}.מקור.json", metadata_text.encode("utf-8")),
+    ]
+    originals: dict[Path, bytes] = {}
+    original_modes: dict[Path, int] = {}
+    staged: dict[Path, Path] = {}
+    replaced: list[Path] = []
+
+    try:
+        # Capture every original before replacing any file. Refuse symlinked or
+        # non-regular targets rather than reading/writing through a redirect.
+        for target, _ in targets:
+            if library.is_path_link(target):
+                raise UpdateProblem(f"refusing to replace symlink/junction: {target}")
+            info = target.lstat()
+            if not os.path.isfile(target) or not stat.S_ISREG(info.st_mode):
+                raise UpdateProblem(f"required output is not a regular file: {target}")
+            fd = os.open(
+                target,
+                os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+            )
+            try:
+                opened = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino) != (info.st_dev, info.st_ino):
+                    raise UpdateProblem(f"output changed while opening: {target}")
+                chunks = []
+                while True:
+                    chunk = os.read(fd, 1024 * 1024)
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                after = os.fstat(fd)
+                if (opened.st_dev, opened.st_ino, opened.st_size, opened.st_mtime_ns) != (
+                    after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+                ):
+                    raise UpdateProblem(f"output changed while reading: {target}")
+                originals[target] = b"".join(chunks)
+                original_modes[target] = stat.S_IMODE(after.st_mode)
+            finally:
+                os.close(fd)
+
+        # Build all replacement files on the same filesystem and fsync before
+        # any canonical dataset path changes.
+        for target, payload in targets:
+            fd, temp_name = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=directory)
+            temp = Path(temp_name)
+            staged[target] = temp
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.chmod(temp, original_modes[target])
+
+        reject_symlink_tree(directory)
+        for target, _ in targets:
+            if library.is_path_link(target):
+                raise UpdateProblem(f"output became a symlink/junction during refresh: {target}")
+            os.replace(staged[target], target)
+            replaced.append(target)
+        # Persist directory entry updates where supported.
+        try:
+            directory_fd = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+        except OSError:
+            pass
+    except Exception as exc:
+        rollback_errors = []
+        for target in reversed(replaced):
+            try:
+                fd, restore_name = tempfile.mkstemp(
+                    prefix=f".{target.name}.rollback.", suffix=".tmp", dir=directory
+                )
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(originals[target])
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.chmod(restore_name, original_modes[target])
+                os.replace(restore_name, target)
+            except Exception as rollback_exc:
+                rollback_errors.append(f"{target}: {rollback_exc}")
+        if rollback_errors:
+            raise UpdateProblem(
+                f"dataset refresh failed ({exc}); rollback also failed for: " + "; ".join(rollback_errors)
+            ) from exc
+        if isinstance(exc, UpdateProblem):
+            raise
+        raise UpdateProblem(f"dataset refresh failed; original files restored: {exc}") from exc
+    finally:
+        for temp in staged.values():
+            try:
+                temp.unlink()
+            except FileNotFoundError:
+                pass
 
 
 def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
+    reject_symlink_tree(directory)
     name = directory.name
     meta_path = directory / f"{name}.מקור.json"
     jsonl_path = directory / f"{name}.jsonl"
     if not meta_path.is_file() or not jsonl_path.is_file() or not (directory / f"{name}.csv").is_file():
         raise UpdateProblem("required JSONL, CSV, or source metadata file is missing")
-    meta = json.loads(meta_path.read_text(encoding="utf-8"))
-    expected = {"masechet", "id_prefix", "origin_repo", "origin_path",
-                "origin_commit", "origin_sha256", "note"}
-    if not isinstance(meta, dict) or set(meta) != expected or meta["masechet"] != name:
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"), object_pairs_hook=validate.unique_json_object)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, validate.DuplicateJSONKeyError) as exc:
+        raise UpdateProblem(f"source metadata is not valid JSON: {exc}") from exc
+    expected = library.SOURCE_META_KEYS
+    if not isinstance(meta, dict) or set(meta) != expected or meta.get("book_name") != name:
         raise UpdateProblem("source metadata does not match the expected schema")
+    try:
+        library.validate_source_origin(meta)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise UpdateProblem(f"invalid Otzaria source provenance: {exc}") from exc
     if not re.fullmatch(r"[0-9a-f]{40}", str(meta["origin_commit"])):
         raise UpdateProblem("origin_commit must be a full 40-character SHA")
     commit = latest_commit(meta, ref)
@@ -236,14 +354,19 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     if problem or old_raw is None:
         raise UpdateProblem(f"cannot load pinned source: {problem or 'unknown error'}")
     old, new = normalized_lines(old_raw), normalized_lines(new_raw)
+    new_reference_lines = new_raw.decode("utf-8").split("\n")
+    try:
+        new_references, new_section_ids = source_refs.line_reference_data(new_reference_lines)
+    except ValueError as exc:
+        raise UpdateProblem(f"candidate source headings are invalid: {exc}") from exc
     mapping, rows, issues = line_map(old, new), read_rows(jsonl_path), []
     for row in rows:
         original = dict(row)
         try:
-            map_citation(row, "correct", old, new, mapping, name)
-            map_citation(row, "near_miss", old, new, mapping, name)
+            map_citation(row, "correct", old, new, mapping, name, new_references, new_section_ids)
+            map_citation(row, "near_miss", old, new, mapping, name, new_references, new_section_ids)
             ensure_citations_do_not_overlap(row)
-            row["near_miss_same_amud"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
+            row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
             issues.append(f"- {row['id']} ({row['query']}): {exc}")
             row.clear()
@@ -268,9 +391,27 @@ def main() -> int:
     parser.add_argument("--report", default="SOURCE_UPDATE_REPORT.md")
     args = parser.parse_args()
     root = Path(args.datasets_dir)
+    if path_has_link_component(root) is not None:
+        print(f"Refusing to scan a dataset path containing a symlink or junction: {root}", file=sys.stderr)
+        return 1
+    if root.exists() and not root.is_dir():
+        print(f"Dataset root is not a directory: {root}", file=sys.stderr)
+        return 1
+
+    # Validate the report destination before changing any dataset files.
+    report = Path(args.report)
+    if path_has_link_component(report) is not None:
+        print(f"Refusing to write a report path containing a symlink or junction: {report}", file=sys.stderr)
+        return 1
+    if not report.parent.exists() or not report.parent.is_dir():
+        print(f"Report parent directory does not exist: {report.parent}", file=sys.stderr)
+        return 1
+    if report.exists() and not report.is_file():
+        print(f"Report destination is not a regular file: {report}", file=sys.stderr)
+        return 1
+
     issues, results = [], []
-    dirs = sorted(p for p in root.iterdir()
-                  if p.is_dir() and (p / f"{p.name}.מקור.json").is_file()) if root.exists() else []
+    dirs = sorted({p.parent for p in root.rglob("*.מקור.json")}) if root.exists() else []
     for directory in dirs:
         try:
             result, issue = update_dataset(directory, args.ref)
@@ -280,7 +421,6 @@ def main() -> int:
         except Exception as exc:
             results.append(f"{directory.name}: not updated ({type(exc).__name__}: {exc})")
             issues.append(f"## {directory.name}\n\nDataset unchanged. Error: {type(exc).__name__}: {exc}\n")
-    report = Path(args.report)
     if issues:
         report.write_text("# Source update report — manual review required\n\n" + "\n\n".join(issues), encoding="utf-8")
     elif report.exists():

@@ -1,6 +1,8 @@
 import csv, json, os, shutil, sys, tempfile, unittest
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import validate
+import source_refs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, "fixture", "בדיקה")
@@ -44,36 +46,75 @@ class Valid(Base):
         # השורה בספרייה כוללת ניקוד, תגיות ו"יהוה", והציטוט כתוב בלי ניקוד וב"ה'"
         self.assertEqual(self.errs(), [])
 
-    def test_page_numeral_punctuation_is_normalized(self):
-        ranges = validate.amud_ranges([
-            "דף י״א.",
-            "טקסט",
-            "דף י״א:",
+    def test_heading_paths_follow_hierarchy(self):
+        refs = source_refs.line_references([
+            "<h1>כתר ראש</h1>",
+            "<h2>הלכות ציצית</h2>",
+            "<h3>סימן א</h3>",
+            "טקסט בתוך הסימן",
+            "<h4>סעיף קטן א</h4>",
+            "טקסט נוסף",
+            "<h3>סימן ב</h3>",
             "המשך",
         ])
-        self.assertEqual(ranges[("יא", "א")], (1, 2))
-        self.assertEqual(ranges[("יא", "ב")], (3, 4))
+        self.assertEqual(refs[3], "הלכות ציצית > סימן א")
+        self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
+        self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
-    def test_malformed_page_heading_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "malformed page heading at source line 3"):
-            validate.amud_ranges([
-                "דף א.",
+    def test_skipped_heading_level_keeps_nearest_ancestor(self):
+        refs = source_refs.line_references([
+            "<h1>ספר</h1>",
+            "<h2>A</h2>",
+            "<h4>B</h4>",
+            "body",
+        ])
+        self.assertEqual(refs[2], "A > B")
+        self.assertEqual(refs[3], "A > B")
+
+    def test_heading_reference_preserves_visible_title(self):
+        refs = source_refs.line_references([
+            "<h2>שֵׁם יהוה ״</h2>",
+            "body",
+        ])
+        self.assertEqual(refs[0], "שֵׁם יהוה ״")
+
+    def test_repeated_heading_titles_have_distinct_internal_sections(self):
+        lines = [
+            "<h2>אותו סימן</h2>",
+            "טקסט ראשון",
+            "<h2>אותו סימן</h2>",
+            "טקסט שני",
+        ]
+        refs, section_ids = source_refs.line_reference_data(lines)
+        self.assertEqual(refs[1], refs[3])
+        self.assertNotEqual(section_ids[1], section_ids[3])
+        with self.assertRaisesRegex(ValueError, "repeated-heading boundary"):
+            source_refs.span_reference(refs, 2, 4, section_ids)
+
+    def test_malformed_empty_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed heading at source line 3"):
+            source_refs.line_references([
+                "<h1>ספר</h1>",
+                "<h2>פרק</h2>",
+                "<h3></h3>",
                 "טקסט",
-                'דף ״.',
-                "טקסט שלא צריך להשתייך לדף א",
             ])
 
-    def test_duplicate_normalized_page_heading_fails_closed(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            'duplicate normalized page heading יא ע"א at source lines 1 and 3',
-        ):
-            validate.amud_ranges([
-                "דף י״א.",
-                "טקסט",
-                "דף יא.",
-                "המשך",
-            ])
+    def test_empty_markdown_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed heading at source line 2"):
+            source_refs.line_references(["<h1>ספר</h1>", "## ", "טקסט"])
+
+    def test_toc_excluded_heading_does_not_replace_reference(self):
+        refs = source_refs.line_references([
+            "<h1>כתר ראש</h1>",
+            "<h2>הלכות ציצית</h2>",
+            "טקסט",
+            '<h2 data-toc="none">כותרת משנית</h2>',
+            "המשך",
+        ])
+        self.assertEqual(refs[3], "הלכות ציצית")
+        self.assertEqual(refs[4], "הלכות ציצית")
+
 
 
 class JsonlChecks(Base):
@@ -81,6 +122,11 @@ class JsonlChecks(Base):
         with open(os.path.join(self.d, NAME + ".jsonl"), "a", encoding="utf-8") as f:
             f.write("{not json}\n")
         self.assertTrue(self.has("JSON לא תקין"))
+
+    def test_duplicate_keys_in_jsonl_are_rejected(self):
+        with open(os.path.join(self.d, NAME + ".jsonl"), "w", encoding="utf-8") as f:
+            f.write('{"id":"first","id":"second"}\n')
+        self.assertTrue(self.has("duplicate JSON key"))
 
     def test_extra_field(self):
         rows = self.load(); rows[0]["extra"] = "x"; self.save(rows)
@@ -94,9 +140,9 @@ class JsonlChecks(Base):
         rows = self.load(); rows[1]["id"] = rows[0]["id"]; self.save(rows)
         self.assertTrue(self.has("id כפול"))
 
-    def test_line_in_wrong_amud(self):
+    def test_line_in_wrong_heading(self):
         rows = self.load(); rows[0]["correct_line"] = "7"; self.save(rows)
-        self.assertTrue(self.has("אינו בתוך"))
+        self.assertTrue(self.has("אינו תואם למסלול הכותרות"))
 
     def test_line_outside_file(self):
         rows = self.load(); rows[0]["correct_line"] = "999"; self.save(rows)
@@ -106,6 +152,19 @@ class JsonlChecks(Base):
         rows = self.load(); rows[0]["correct_quote"] = "ציטוט שלא קיים בשום מקום"; self.save(rows)
         self.assertTrue(self.has("לא נמצא בשורה"))
 
+    def test_quote_that_normalizes_to_empty_is_rejected(self):
+        rows = self.load(); rows[0]["correct_quote"] = "<b>ְ</b>"; self.save(rows)
+        self.assertTrue(self.has("ריק אחרי נירמול"))
+
+    def test_line_range_with_trailing_newline_is_rejected(self):
+        rows = self.load(); rows[0]["correct_line"] = rows[0]["correct_line"] + "\n"; self.save(rows)
+        self.assertTrue(self.has("correct_line לא תקין"))
+
+    def test_extremely_long_line_number_is_reported_not_crashed(self):
+        rows = self.load(); rows[0]["correct_line"] = "9" * 5000; self.save(rows)
+        errors = self.errs()
+        self.assertTrue(any("correct_line" in error and ("לא תקין" in error or "מחוץ לקובץ" in error) for error in errors))
+
     def test_bad_type_and_split(self):
         rows = self.load(); rows[0]["type"] = "weird"; rows[0]["split"] = "dev"; self.save(rows)
         self.assertTrue(self.has("type לא חוקי")); self.assertTrue(self.has("split לא חוקי"))
@@ -114,12 +173,12 @@ class JsonlChecks(Base):
         rows = self.load(); rows[0]["query"] = ""; self.save(rows)
         self.assertTrue(self.has("השדה query ריק"))
 
-    def test_ref_for_other_masechet(self):
-        rows = self.load(); rows[0]["correct_ref"] = 'מגילה ב ע"א'; self.save(rows)
-        self.assertTrue(self.has("correct_ref לא תקין"))
+    def test_ref_for_wrong_heading(self):
+        rows = self.load(); rows[0]["correct_ref"] = "כותרת שאינה קיימת"; self.save(rows)
+        self.assertTrue(self.has("אינו תואם למסלול הכותרות"))
 
-    def test_same_amud_flag_inconsistent(self):
-        rows = self.load(); rows[0]["near_miss_same_amud"] = "כן"; self.save(rows)
+    def test_same_section_flag_inconsistent(self):
+        rows = self.load(); rows[0]["near_miss_same_section"] = "כן"; self.save(rows)
         self.assertTrue(self.has("לא עקבי"))
 
 
@@ -184,6 +243,16 @@ class SourceChecks(Base):
             f.write("{")
         self.assertTrue(self.has("בדיקה.מקור.json: JSON לא תקין"))
 
+    def test_non_object_source_json_is_reported_without_crashing(self):
+        with open(os.path.join(self.d, NAME + ".מקור.json"), "w", encoding="utf-8") as f:
+            f.write("null")
+        self.assertTrue(self.has("המטא־נתונים חייבים להיות אובייקט JSON"))
+
+    def test_duplicate_keys_in_source_json_are_rejected(self):
+        with open(os.path.join(self.d, NAME + ".מקור.json"), "w", encoding="utf-8") as f:
+            f.write('{"book_name":"בדיקה","book_name":"שונה"}')
+        self.assertTrue(self.has("JSON לא תקין"))
+
     def test_commit_must_be_full_sha(self):
         p = os.path.join(self.d, NAME + ".מקור.json")
         with open(p, encoding="utf-8") as f:
@@ -199,13 +268,88 @@ class SourceChecks(Base):
         for ext in (".jsonl", ".csv", ".מקור.json"):
             shutil.copy(os.path.join(self.d, NAME + ext), os.path.join(other, "אחרת" + ext))
         errs = validate.validate_dataset(other, loader=lambda d, m: (self.lib, None))
-        self.assertTrue(any("חייב להיות זהה לשם המסכת" in e for e in errs))
+        self.assertTrue(any("חייב להיות זהה ל-book_name" in e for e in errs))
 
     def test_library_file_changed(self):
         self.assertTrue(self.has("שונה מ-origin_sha256", loader=lambda d, m: (self.lib + "\nעוד".encode("utf-8"), None)))
 
     def test_library_unavailable(self):
-        self.assertTrue(self.has("קובץ הספרייה: לא ניתן", loader=lambda d, m: (None, "לא ניתן למשוך")))
+        self.assertTrue(self.has("קובץ המקור מאוצריא: לא ניתן למשוך", loader=lambda d, m: (None, "לא ניתן למשוך")))
+
+    def test_only_otzaria_sources_are_accepted(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_repo"] = "https://github.com/example/library"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("origin_repo must be https://github.com/Otzaria/otzaria-library"))
+
+    def test_uppercase_txt_source_extension_is_rejected(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_path"] = "MoreBooks/ספרים/אוצריא/בדיקה/בדיקה.TXT"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("origin_path must point to an Otzaria .txt book"))
+
+    def test_source_category_must_match_library_path(self):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["source_category"] = "תלמוד בבלי"
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        self.assertTrue(self.has("does not match the library path category"))
+
+    def test_approved_dataset_requires_human_verification(self):
+        errs = validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), require_verified=True
+        )
+        self.assertTrue(any("מערך מאושר חייב לכלול verified_by_human" in e for e in errs))
+
+    def test_dataset_discovery_includes_book_folder_without_metadata(self):
+        root = os.path.join(self.tmp, "datasets")
+        target = os.path.join(root, "הלכה", "ספר בלי מטא")
+        os.makedirs(target)
+        self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
+
+    def test_dataset_discovery_reports_misplaced_book_folder_with_jsonl(self):
+        root = os.path.join(self.tmp, "datasets")
+        target = os.path.join(root, "ספר שהונח ברמה שגויה")
+        os.makedirs(target)
+        with open(os.path.join(target, "ספר שהונח ברמה שגויה.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
+
+    def test_direct_validator_rejects_symlinked_dataset_root(self):
+        target = os.path.join(self.tmp, "real")
+        os.makedirs(target)
+        link = os.path.join(self.tmp, "linked")
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        errors = validate.validate_dataset(link, loader=lambda d, m: (self.lib, None))
+        self.assertTrue(any("קישור סמלי" in error for error in errors))
+
+    def test_dataset_discovery_does_not_follow_symlinked_book(self):
+        root = os.path.join(self.tmp, "datasets")
+        category = os.path.join(root, "הלכה")
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(category)
+        os.makedirs(outside)
+        with open(os.path.join(outside, "ספר.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        link = os.path.join(category, "ספר")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        self.assertNotIn(Path(link), validate.dataset_dirs(root))
+        self.assertIn(Path(link), validate.symlink_entries(root))
+
 
 
 if __name__ == "__main__":
