@@ -48,7 +48,7 @@ The metadata file `<book_name>.מקור.json` has exactly:
 - `source_category`
 - `id_prefix`
 - `origin_repo` (must be `https://github.com/Otzaria/otzaria-library`)
-- `origin_path` (relative `.txt` path below `ספרים/אוצריא/`)
+- `origin_path` (repository-relative `.txt` path containing `ספרים/אוצריא/<category>/...`; it may have leading folders such as `MoreBooks/`)
 - `origin_commit` (full 40-character SHA)
 - `origin_sha256` (64-character SHA-256 of the raw source bytes)
 - `note`
