@@ -1,6 +1,6 @@
 """גישה לקובצי ספרים ב-Otzaria, עם pin לקומיט ול-hash ולנירמול אחיד."""
-import hashlib, os, re, urllib.parse, urllib.request
-from pathlib import PurePosixPath
+import hashlib, os, re, tempfile, urllib.parse, urllib.request
+from pathlib import Path, PurePosixPath
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 CACHE_DIR = os.path.join(ROOT, ".cache", "library")
@@ -96,6 +96,70 @@ def fetch(meta, ref):
         return response.read()
 
 
+def is_path_link(path):
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def safe_cache_directory(create=False):
+    """Return the cache directory only if every existing component stays in this repo."""
+    root = Path(ROOT).resolve(strict=True)
+    cache_root = root / ".cache"
+    cache_dir = cache_root / "library"
+    for directory in (cache_root, cache_dir):
+        if is_path_link(directory):
+            raise ValueError(f"cache directory must not be a symlink or junction: {directory}")
+        if directory.exists() and not directory.is_dir():
+            raise ValueError(f"cache path is not a directory: {directory}")
+        if create and not directory.exists():
+            directory.mkdir()
+        if directory.exists():
+            try:
+                directory.resolve(strict=True).relative_to(root)
+            except (OSError, ValueError) as exc:
+                raise ValueError(f"cache directory resolves outside repository: {directory}") from exc
+    return cache_dir if cache_dir.is_dir() else None
+
+
+def read_cache_file(path, expected_hash):
+    """Read only a regular cache file, refusing symlink/junction redirection."""
+    if is_path_link(path):
+        return None
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    try:
+        info = os.fstat(fd)
+        if not __import__("stat").S_ISREG(info.st_mode):
+            return None
+        chunks = []
+        while True:
+            chunk = os.read(fd, 1024 * 1024)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        data = b"".join(chunks)
+        after = os.fstat(fd)
+        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
+            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
+        ):
+            return None
+        if hashlib.sha256(data).hexdigest() != expected_hash:
+            return None
+        return data
+    except OSError:
+        return None
+    finally:
+        os.close(fd)
+
+
 def cache_path(slug, meta):
     identity = hashlib.sha256(
         (repo_slug(meta["origin_repo"]) + "\0" + meta["origin_path"]).encode("utf-8")
@@ -112,11 +176,19 @@ def get_pinned(slug, meta, offline=False):
 
     want = meta["origin_sha256"]
     cp = cache_path(slug, meta)
-    if os.path.isfile(cp):
-        with open(cp, "rb") as handle:
-            data = handle.read()
-        if hashlib.sha256(data).hexdigest() == want:
-            return data, None
+    try:
+        cache_dir = safe_cache_directory(create=False)
+    except (OSError, ValueError) as exc:
+        cache_dir = None
+        cache_problem = str(exc)
+    else:
+        cache_problem = None
+    if cache_dir is not None:
+        cached = read_cache_file(Path(cache_dir) / Path(cp).name, want)
+        if cached is not None:
+            return cached, None
+    elif offline:
+        return None, f"לא ניתן להשתמש במטמון באופן בטוח: {cache_problem or 'תיקיית המטמון אינה זמינה'}"
     if offline:
         return None, "אין עותק תקין במטמון והבדיקה רצה ב-offline. להריץ פעם אחת עם חיבור לרשת"
     try:
@@ -125,7 +197,25 @@ def get_pinned(slug, meta, offline=False):
         return None, f"לא ניתן למשוך את קובץ המקור ({type(exc).__name__}: {exc})"
     if hashlib.sha256(data).hexdigest() != want:
         return None, "קובץ המקור שונה מ-origin_sha256 שבקובץ המטא־נתונים"
-    os.makedirs(CACHE_DIR, exist_ok=True)
-    with open(cp, "wb") as handle:
-        handle.write(data)
+
+    # Cache is an optimization, never a reason to trust or overwrite a symlink.
+    try:
+        cache_dir = safe_cache_directory(create=True)
+        cache_file = Path(cache_dir) / Path(cp).name
+        fd, temporary = tempfile.mkstemp(prefix=".source-", suffix=".tmp", dir=cache_dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, cache_file)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    except (OSError, ValueError):
+        # The fetched bytes have already been hash-verified; a blocked cache
+        # write should not invalidate a successful source read.
+        pass
     return data, None
