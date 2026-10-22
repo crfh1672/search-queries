@@ -67,7 +67,7 @@ def load_data(data_dir="datasets"):
             # Add a file only after every row in it passed basic checks.
             rows.update((r["id"], r) for r in file_rows)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            print(f"Warning: failed to load {p!r}; file ignored: {exc}", file=sys.stderr)
+            raise ValueError(f"canonical dataset file {p!r} is invalid: {exc}") from exc
     return rows
 
 
@@ -80,7 +80,10 @@ def main():
     a = ap.parse_args()
     if a.k < 1:
         ap.error("--k חייב להיות מספר חיובי")
-    data = load_data(a.data)
+    try:
+        data = load_data(a.data)
+    except (OSError, ValueError) as exc:
+        ap.error(f"לא ניתן לטעון מערכי נתונים תקינים: {exc}")
     if a.template:
         try:
             with open(a.template, "w", encoding="utf-8-sig", newline="") as f:
