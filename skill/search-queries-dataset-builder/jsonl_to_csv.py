@@ -10,7 +10,7 @@ from pathlib import Path
 FIELDS = [
     "id", "query", "type", "correct_ref", "correct_quote", "correct_line",
     "near_miss_ref", "near_miss_quote", "near_miss_line",
-    "near_miss_same_amud", "split", "verified_by_human",
+    "near_miss_same_section", "split", "verified_by_human",
 ]
 OPTIONAL_EMPTY = {"verified_by_human"}
 
