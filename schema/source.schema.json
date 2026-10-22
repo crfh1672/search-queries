@@ -3,7 +3,7 @@
   "title": "פרטי מקור של מערך שאילתות",
   "type": "object",
   "additionalProperties": false,
-  "required": ["book_name","source_category","id_prefix","origin_repo","origin_path","origin_commit","origin_sha256","note"],
+    "origin_path": {"type": "string", "pattern": "^(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)ספרים/אוצריא/.*(?:^|/)ספרים/אוצריא/)(?:[^/]+/)*ספרים/אוצריא/[^/]+/.+\\.txt$"},
   "properties": {
     "book_name": {"type": "string", "minLength": 1},
     "source_category": {"type": "string", "minLength": 1},
