@@ -148,6 +148,19 @@ class JsonlChecks(Base):
         rows = self.load(); rows[0]["correct_quote"] = "ציטוט שלא קיים בשום מקום"; self.save(rows)
         self.assertTrue(self.has("לא נמצא בשורה"))
 
+    def test_quote_that_normalizes_to_empty_is_rejected(self):
+        rows = self.load(); rows[0]["correct_quote"] = "<b>ְ</b>"; self.save(rows)
+        self.assertTrue(self.has("ריק אחרי נירמול"))
+
+    def test_line_range_with_trailing_newline_is_rejected(self):
+        rows = self.load(); rows[0]["correct_line"] = rows[0]["correct_line"] + "\\n"; self.save(rows)
+        self.assertTrue(self.has("correct_line לא תקין"))
+
+    def test_extremely_long_line_number_is_reported_not_crashed(self):
+        rows = self.load(); rows[0]["correct_line"] = "9" * 5000; self.save(rows)
+        errors = self.errs()
+        self.assertTrue(any("correct_line" in error and ("לא תקין" in error or "מחוץ לקובץ" in error) for error in errors))
+
     def test_bad_type_and_split(self):
         rows = self.load(); rows[0]["type"] = "weird"; rows[0]["split"] = "dev"; self.save(rows)
         self.assertTrue(self.has("type לא חוקי")); self.assertTrue(self.has("split לא חוקי"))
