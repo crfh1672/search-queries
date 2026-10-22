@@ -33,6 +33,27 @@ META_KEYS = library.SOURCE_META_KEYS
 LINE_RE = re.compile(r"^\d+(-\d+)?$")
 
 
+class DuplicateJSONKeyError(ValueError):
+    """A JSON object contains the same key more than once."""
+
+
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONKeyError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
+
+
+def is_path_link(path):
+    path = Path(path)
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
 def span(s):
     a, _, b = s.partition("-")
     return int(a), int(b or a)
@@ -66,8 +87,8 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     # --- קובץ המקור (<מסכת>.מקור.json) ---
     try:
         with open(os.path.join(d, f_meta), encoding="utf-8") as f:
-            meta = json.load(f)
-    except json.JSONDecodeError as e:
+            meta = json.load(f, object_pairs_hook=unique_json_object)
+    except (json.JSONDecodeError, DuplicateJSONKeyError) as e:
         return [f"{d}/{f_meta}: JSON לא תקין ({e})"]
     except (UnicodeDecodeError, OSError) as e:
         return [f"{d}/{f_meta}: לא ניתן לקרוא JSON תקין ({e})"]
@@ -159,8 +180,8 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         if not line.strip():
             continue
         try:
-            r = json.loads(line)
-        except json.JSONDecodeError as e:
+            r = json.loads(line, object_pairs_hook=unique_json_object)
+        except (json.JSONDecodeError, DuplicateJSONKeyError) as e:
             err(f"{f_jsonl}:{n}: JSON לא תקין ({e})"); continue
         if not isinstance(r, dict):
             err(f"{f_jsonl}:{n}: השורה אינה אובייקט"); continue
@@ -272,7 +293,7 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
 def symlink_entries(root):
     """List symbolic links without traversing them."""
     root = Path(root)
-    if root.is_symlink():
+    if is_path_link(root):
         return [root]
     if not root.is_dir():
         return []
@@ -281,28 +302,28 @@ def symlink_entries(root):
         base = Path(current)
         for name in list(dirs):
             candidate = base / name
-            if candidate.is_symlink():
+            if is_path_link(candidate):
                 found.append(candidate)
                 dirs.remove(name)
         for name in files:
             candidate = base / name
-            if candidate.is_symlink():
+            if is_path_link(candidate):
                 found.append(candidate)
     return sorted(found)
 
 
 def dataset_dirs(root):
     root = Path(root)
-    if root.is_symlink() or not root.is_dir():
+    if is_path_link(root) or not root.is_dir():
         return []
     # Walk without following symlinks. Catch canonical nested folders, metadata
     # files, and misplaced top-level folders containing JSONL.
     candidates = set()
     for current, dirs, files in os.walk(root, followlinks=False):
         base = Path(current)
-        dirs[:] = [name for name in dirs if not (base / name).is_symlink()]
+        dirs[:] = [name for name in dirs if not is_path_link(base / name)]
         relative = base.relative_to(root)
-        if any(name.endswith(".מקור.json") and not (base / name).is_symlink() for name in files):
+        if any(name.endswith(".מקור.json") and not is_path_link(base / name) for name in files):
             candidates.add(base)
         if len(relative.parts) == 2:
             candidates.add(base)
@@ -315,7 +336,7 @@ def path_symlink_component(path):
     path = Path(path).absolute()
     for component in reversed((path, *path.parents)):
         try:
-            if component.is_symlink():
+            if is_path_link(component):
                 return component
         except OSError:
             continue
@@ -355,7 +376,7 @@ def main(argv):
         targets = []
         for root_name, required in (("datasets", True), ("drafts", False)):
             root = repo_root / root_name
-            if root.is_symlink():
+            if is_path_link(root):
                 scan_errors.append(f"{root}: dataset root must not be a symlink")
                 continue
             if root.exists() and not root.is_dir():
