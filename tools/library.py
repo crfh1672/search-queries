@@ -44,7 +44,7 @@ def source_category_from_path(origin_path):
     if any(part in {"", ".", ".."} for part in origin_path.split("/")):
         raise ValueError("origin_path must not contain empty, '.' or '..' path parts")
     path = PurePosixPath(origin_path)
-    if path.suffix.lower() != ".txt":
+    if path.suffix != ".txt":
         raise ValueError("origin_path must point to an Otzaria .txt book")
     matches = [
         i for i in range(len(path.parts) - 1)
