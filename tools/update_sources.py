@@ -120,6 +120,7 @@ def reference_for_line(references: list[str], line_no: int, book_name: str) -> s
 def map_citation(
     row: dict[str, str], prefix: str, old: list[str], new: list[str],
     mapping: dict[int, int], book_name: str, references: list[str],
+    section_ids: list[int] | None = None,
 ) -> None:
     line_key, quote_key, ref_key = f"{prefix}_line", f"{prefix}_quote", f"{prefix}_ref"
     start, end = locate_quote(old, new, row[quote_key], parse_span(row[line_key]), mapping)
@@ -127,7 +128,7 @@ def map_citation(
     # make a span leave and later return to the same textual reference.
     reference_for_line(references, start, book_name)
     try:
-        ref = source_refs.span_reference(references, start, end)
+        ref = source_refs.span_reference(references, start, end, section_ids)
     except ValueError as exc:
         raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary: {exc}") from exc
     row[line_key] = str(start) if start == end else f"{start}-{end}"
@@ -226,15 +227,15 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
     old, new = normalized_lines(old_raw), normalized_lines(new_raw)
     new_reference_lines = new_raw.decode("utf-8").split("\n")
     try:
-        new_references = source_refs.line_references(new_reference_lines)
+        new_references, new_section_ids = source_refs.line_reference_data(new_reference_lines)
     except ValueError as exc:
         raise UpdateProblem(f"candidate source headings are invalid: {exc}") from exc
     mapping, rows, issues = line_map(old, new), read_rows(jsonl_path), []
     for row in rows:
         original = dict(row)
         try:
-            map_citation(row, "correct", old, new, mapping, name, new_references)
-            map_citation(row, "near_miss", old, new, mapping, name, new_references)
+            map_citation(row, "correct", old, new, mapping, name, new_references, new_section_ids)
+            map_citation(row, "near_miss", old, new, mapping, name, new_references, new_section_ids)
             ensure_citations_do_not_overlap(row)
             row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
         except UpdateProblem as exc:
