@@ -77,8 +77,8 @@ class Valid(Base):
             '<h2 data-toc="none">כותרת משנית</h2>',
             "המשך",
         ])
+        self.assertEqual(refs[3], "הלכות ציצית")
         self.assertEqual(refs[4], "הלכות ציצית")
-        self.assertEqual(refs[5], "הלכות ציצית")
 
 
 
