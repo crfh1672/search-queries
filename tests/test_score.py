@@ -37,7 +37,7 @@ class ScoreInputTests(unittest.TestCase):
                         score.main()
             self.assertEqual(cm.exception.code, 2)
 
-    def test_loader_ignores_entire_file_when_a_later_row_is_invalid(self):
+    def test_loader_fails_when_a_canonical_file_has_a_later_invalid_row(self):
         with tempfile.TemporaryDirectory() as temp:
             book = Path(temp) / "הלכה" / "ספר"
             book.mkdir(parents=True)
@@ -54,7 +54,7 @@ class ScoreInputTests(unittest.TestCase):
                 directory = Path(temp) / category / book
                 directory.mkdir(parents=True)
                 (directory / f"{book}.jsonl").write_text(
-                    '{"id":"duplicate-001","type":"short","query":"q"}\\n',
+                    '{"id":"duplicate-001","type":"short","query":"q"}\n',
                     encoding="utf-8",
                 )
             with self.assertRaisesRegex(ValueError, "duplicate query ID"):
