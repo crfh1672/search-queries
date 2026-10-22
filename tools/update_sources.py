@@ -33,6 +33,36 @@ class UpdateProblem(Exception):
     """Raised when a source cannot be updated without guessing."""
 
 
+def is_path_link(path: Path) -> bool:
+    if path.is_symlink():
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction and is_junction())
+
+
+def path_has_link_component(path: Path) -> Path | None:
+    path = Path(path).absolute()
+    for component in reversed((path, *path.parents)):
+        if is_path_link(component):
+            return component
+    return None
+
+
+def reject_symlink_tree(directory: Path) -> None:
+    if path_has_link_component(directory) is not None:
+        raise UpdateProblem(f"dataset path contains a symlink or junction: {directory}")
+    for current, dirs, files in os.walk(directory, followlinks=False):
+        base = Path(current)
+        for name in list(dirs):
+            candidate = base / name
+            if is_path_link(candidate):
+                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
+        for name in files:
+            candidate = base / name
+            if is_path_link(candidate):
+                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
+
+
 def normalized_lines(raw: bytes) -> list[str]:
     try:
         text = raw.decode("utf-8")
@@ -201,6 +231,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
 
 
 def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
+    reject_symlink_tree(directory)
     name = directory.name
     meta_path = directory / f"{name}.מקור.json"
     jsonl_path = directory / f"{name}.jsonl"
@@ -262,6 +293,12 @@ def main() -> int:
     parser.add_argument("--report", default="SOURCE_UPDATE_REPORT.md")
     args = parser.parse_args()
     root = Path(args.datasets_dir)
+    if path_has_link_component(root) is not None:
+        print(f"Refusing to scan a dataset path containing a symlink or junction: {root}", file=sys.stderr)
+        return 1
+    if root.exists() and not root.is_dir():
+        print(f"Dataset root is not a directory: {root}", file=sys.stderr)
+        return 1
     issues, results = [], []
     dirs = sorted({p.parent for p in root.rglob("*.מקור.json")}) if root.exists() else []
     for directory in dirs:
@@ -274,6 +311,9 @@ def main() -> int:
             results.append(f"{directory.name}: not updated ({type(exc).__name__}: {exc})")
             issues.append(f"## {directory.name}\n\nDataset unchanged. Error: {type(exc).__name__}: {exc}\n")
     report = Path(args.report)
+    if path_has_link_component(report) is not None:
+        print(f"Refusing to write a report path containing a symlink or junction: {report}", file=sys.stderr)
+        return 1
     if issues:
         report.write_text("# Source update report — manual review required\n\n" + "\n\n".join(issues), encoding="utf-8")
     elif report.exists():
