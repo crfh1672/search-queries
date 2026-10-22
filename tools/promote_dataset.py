@@ -156,6 +156,55 @@ def tree_fingerprint(root: Path) -> dict[str, str]:
     return result
 
 
+def tree_fingerprint_at(directory_fd: int) -> dict[str, str]:
+    """Hash a tree through open directory handles, never resolving child paths globally."""
+    result: dict[str, str] = {}
+
+    def walk(fd: int, prefix: str = "") -> None:
+        before = os.fstat(fd)
+        names = sorted(os.listdir(fd))
+        for name in names:
+            info = os.stat(name, dir_fd=fd, follow_symlinks=False)
+            relative = f"{prefix}/{name}" if prefix else name
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError(f"symlink encountered in promoted snapshot: {relative}")
+            if stat.S_ISDIR(info.st_mode):
+                child_fd = os.open(name, directory_open_flags(), dir_fd=fd)
+                try:
+                    if not is_same_directory(os.fstat(child_fd), info):
+                        raise ValueError(f"directory changed while fingerprinting: {relative}")
+                    walk(child_fd, relative)
+                finally:
+                    os.close(child_fd)
+            elif stat.S_ISREG(info.st_mode):
+                file_fd = os.open(
+                    name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=fd
+                )
+                try:
+                    opened = os.fstat(file_fd)
+                    if not stat.S_ISREG(opened.st_mode) or file_signature(opened) != file_signature(info):
+                        raise ValueError(f"file changed while fingerprinting: {relative}")
+                    digest = hashlib.sha256()
+                    while True:
+                        chunk = os.read(file_fd, 1024 * 1024)
+                        if not chunk:
+                            break
+                        digest.update(chunk)
+                    if file_signature(os.fstat(file_fd)) != file_signature(opened):
+                        raise ValueError(f"file changed while fingerprinting: {relative}")
+                    result[relative] = digest.hexdigest()
+                finally:
+                    os.close(file_fd)
+            else:
+                raise ValueError(f"non-regular entry in promoted snapshot: {relative}")
+
+        if names != sorted(os.listdir(fd)) or file_signature(before) != file_signature(os.fstat(fd)):
+            raise ValueError("promoted snapshot changed while being fingerprinted")
+
+    walk(directory_fd)
+    return result
+
+
 def open_or_create_directory_at(parent_fd: int, name: str) -> int:
     flags = directory_open_flags()
     try:
@@ -227,16 +276,34 @@ def atomic_promote(source: Path, destination: Path, verified_stat, expected_mani
                 source.name, destination.name,
                 src_dir_fd=staging_fd, dst_dir_fd=category_fd,
             )
-            moved = os.stat(destination.name, dir_fd=category_fd, follow_symlinks=False)
-            if not is_same_directory(moved, verified_stat):
+
+            def rollback() -> None:
                 try:
-                    os.stat(source.name, dir_fd=staging_fd, follow_symlinks=False)
-                except FileNotFoundError:
                     os.rename(
                         destination.name, source.name,
                         src_dir_fd=category_fd, dst_dir_fd=staging_fd,
                     )
-                raise RuntimeError("moved directory identity changed; promotion rolled back")
+                except OSError:
+                    # Preserve the primary failure; the caller will report it.
+                    pass
+
+            try:
+                moved = os.stat(destination.name, dir_fd=category_fd, follow_symlinks=False)
+                if not is_same_directory(moved, verified_stat):
+                    raise RuntimeError("moved directory identity changed")
+                target_fd = os.open(destination.name, directory_open_flags(), dir_fd=category_fd)
+                try:
+                    if not is_same_directory(os.fstat(target_fd), verified_stat):
+                        raise RuntimeError("destination directory identity changed")
+                    if tree_fingerprint_at(target_fd) != expected_manifest:
+                        raise RuntimeError("installed snapshot differs from validated content")
+                finally:
+                    os.close(target_fd)
+            except Exception as exc:
+                rollback()
+                raise RuntimeError(
+                    f"promoted snapshot verification failed; rollback attempted: {exc}"
+                ) from exc
         finally:
             for fd in reversed(opened_fds):
                 os.close(fd)
@@ -252,15 +319,24 @@ def atomic_promote(source: Path, destination: Path, verified_stat, expected_mani
             if not source.exists() and not is_path_link(source):
                 os.rename(destination, source)
             raise RuntimeError("moved directory identity changed; promotion rolled back")
-
-    if tree_fingerprint(destination) != expected_manifest:
-        # The staging directory is private, but verify the installed content too.
-        # Restore it to staging if anything changed during the atomic rename.
         try:
-            os.rename(destination, source)
-        except OSError:
-            pass
-        raise RuntimeError("installed snapshot differs from validated content; promotion rolled back")
+            installed_manifest = tree_fingerprint(destination)
+        except (OSError, ValueError) as exc:
+            try:
+                os.rename(destination, source)
+            except OSError:
+                pass
+            raise RuntimeError(
+                f"promoted snapshot verification failed; rollback attempted: {exc}"
+            ) from exc
+        if installed_manifest != expected_manifest:
+            try:
+                os.rename(destination, source)
+            except OSError:
+                pass
+            raise RuntimeError(
+                "installed snapshot differs from validated content; rollback attempted"
+            )
 
 
 def main() -> int:
