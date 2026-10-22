@@ -31,7 +31,7 @@ def heading(line: str) -> tuple[int, str] | None:
         return level, title
 
     # Markdown headings are recognized by Otzaria, though markup is visible there.
-    marker = re.match(r"^\\s*(#{1,6})(?:\\s|$)", line)
+    marker = re.match(r"^\s*(#{1,6})(?:\s|$)", line)
     if marker:
         match = MARKDOWN_HEADING_RE.match(line)
         if not match:
