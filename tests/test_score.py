@@ -31,6 +31,25 @@ def query_record(identifier, query):
 
 
 class ScoreInputTests(unittest.TestCase):
+    def write_data(self, root):
+        data_root = Path(root) / "datasets"
+        book = data_root / "הלכה" / "ספר"
+        book.mkdir(parents=True)
+        (book / "ספר.jsonl").write_text(
+            json.dumps(query_record("book-001", "q")) + "\\n",
+            encoding="utf-8",
+        )
+        return data_root
+
+    def run_score(self, results, data_root):
+        with patch.object(
+            sys, "argv", ["score.py", str(results), "--data", str(data_root)]
+        ):
+            with contextlib.redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as cm:
+                    score.main()
+        self.assertEqual(cm.exception.code, 2)
+
     def test_score_rejects_results_without_rows(self):
         with tempfile.TemporaryDirectory() as temp:
             results = Path(temp) / "results.csv"
@@ -43,16 +62,59 @@ class ScoreInputTests(unittest.TestCase):
 
     def test_score_rejects_zero_rank_instead_of_dividing_by_zero(self):
         with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
             results = Path(temp) / "results.csv"
             results.write_text(
                 "id,type,query,smart_rank,lexical_rank\nbook-001,short,q,0,1\n",
                 encoding="utf-8",
             )
-            with patch.object(sys, "argv", ["score.py", str(results)]):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    with self.assertRaises(SystemExit) as cm:
-                        score.main()
-            self.assertEqual(cm.exception.code, 2)
+            self.run_score(results, data_root)
+
+    def test_score_rejects_unknown_result_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            results = Path(temp) / "results.csv"
+            results.write_text(
+                "id,type,query,smart_rank\nother-001,short,q,1\n",
+                encoding="utf-8",
+            )
+            self.run_score(results, data_root)
+
+    def test_score_rejects_duplicate_result_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            results = Path(temp) / "results.csv"
+            results.write_text(
+                "id,type,query,smart_rank\nbook-001,short,q,1\nbook-001,short,q,2\n",
+                encoding="utf-8",
+            )
+            self.run_score(results, data_root)
+
+    def test_score_rejects_edited_query_or_type(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            results = Path(temp) / "results.csv"
+            results.write_text(
+                "id,type,query,smart_rank\nbook-001,conceptual,changed,1\n",
+                encoding="utf-8",
+            )
+            self.run_score(results, data_root)
+
+    def test_score_rejects_missing_canonical_ids(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            book2 = data_root / "מדרש" / "ספר נוסף"
+            book2.mkdir(parents=True)
+            (book2 / "ספר נוסף.jsonl").write_text(
+                json.dumps(query_record("book-002", "q2")) + "\\n",
+                encoding="utf-8",
+            )
+            results = Path(temp) / "results.csv"
+            results.write_text(
+                "id,type,query,smart_rank\nbook-001,short,q,1\n",
+                encoding="utf-8",
+            )
+            self.run_score(results, data_root)
 
     def test_loader_fails_when_a_canonical_file_has_a_later_invalid_row(self):
         with tempfile.TemporaryDirectory() as temp:
