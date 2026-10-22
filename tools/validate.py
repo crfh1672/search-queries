@@ -58,14 +58,12 @@ def span(s, max_line=None):
     match = LINE_RE.fullmatch(s)
     if not match:
         raise ValueError(f"invalid line range {s!r}")
-    first = match.group(0).partition("-")[0]
-    last = match.group(0).partition("-")[2] or first
-    # Reject absurdly long integers before int() can raise the interpreter's
-    # digit-limit exception; no valid source can have more than max_line lines.
-    if max_line is not None:
-        limit = len(str(max_line))
-        if len(first) > limit or len(last) > limit:
-            raise ValueError(f"line range {s!r} exceeds source length")
+    first = match.group(1)
+    last = match.group(2) or first
+    # Reject absurdly long integers before int() can raise Python's digit-limit
+    # exception. Ordinary out-of-range values are parsed and reported as such.
+    if len(first) > 4000 or len(last) > 4000:
+        raise ValueError(f"line range {s!r} is too large to parse safely")
     a, b = int(first), int(last)
     if a < 1 or b < a:
         raise ValueError(f"invalid line range {s!r}")
