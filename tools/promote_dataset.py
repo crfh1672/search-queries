@@ -19,15 +19,24 @@ def main() -> int:
     parser.add_argument("--offline", action="store_true", help="use only the validated source cache")
     args = parser.parse_args()
 
-    source = Path(args.draft)
-    if not source.is_absolute():
-        source = (Path.cwd() / source).resolve()
+    supplied_path = Path(args.draft)
+    candidate = supplied_path if supplied_path.is_absolute() else Path.cwd() / supplied_path
+    # Reject symlinks in the supplied path before resolving it, then check the
+    # resolved location to prevent absolute paths and '..' from bypassing containment.
+    if any(part.is_symlink() for part in (candidate, *candidate.parents)):
+        parser.error("draft path must not traverse symlinks")
+    try:
+        source = candidate.resolve(strict=True)
+    except OSError:
+        parser.error("draft path must exist")
     try:
         relative = source.relative_to(REPO_ROOT.resolve())
     except ValueError:
         parser.error("draft path must be inside this repository")
     if len(relative.parts) != 3 or relative.parts[0] != "drafts":
         parser.error("expected drafts/<source-category>/<book-folder>")
+    if any(entry.is_symlink() for entry in source.rglob("*")):
+        parser.error("draft contents must not contain symlinks")
 
     errors = validate.validate_dataset(
         str(source), offline=args.offline, require_verified=True
