@@ -78,6 +78,19 @@ class Valid(Base):
         ])
         self.assertEqual(refs[0], "שֵׁם יהוה ״")
 
+    def test_repeated_heading_titles_have_distinct_internal_sections(self):
+        lines = [
+            "<h2>אותו סימן</h2>",
+            "טקסט ראשון",
+            "<h2>אותו סימן</h2>",
+            "טקסט שני",
+        ]
+        refs, section_ids = source_refs.line_reference_data(lines)
+        self.assertEqual(refs[1], refs[3])
+        self.assertNotEqual(section_ids[1], section_ids[3])
+        with self.assertRaisesRegex(ValueError, "repeated-heading boundary"):
+            source_refs.span_reference(refs, 2, 4, section_ids)
+
     def test_malformed_empty_heading_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "malformed heading at source line 3"):
             source_refs.line_references([
@@ -273,6 +286,17 @@ class SourceChecks(Base):
         with open(os.path.join(target, "ספר שהונח ברמה שגויה.jsonl"), "w", encoding="utf-8") as handle:
             handle.write("{}\n")
         self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
+
+    def test_direct_validator_rejects_symlinked_dataset_root(self):
+        target = os.path.join(self.tmp, "real")
+        os.makedirs(target)
+        link = os.path.join(self.tmp, "linked")
+        try:
+            os.symlink(target, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        errors = validate.validate_dataset(link, loader=lambda d, m: (self.lib, None))
+        self.assertTrue(any("קישור סמלי" in error for error in errors))
 
     def test_dataset_discovery_does_not_follow_symlinked_book(self):
         root = os.path.join(self.tmp, "datasets")
