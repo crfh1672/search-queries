@@ -112,8 +112,9 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         err(f"קובץ המקור שונה מ-origin_sha256 שב-{f_meta}")
         return errs
     try:
-        lines = [library.norm(l.rstrip("\\r")) for l in data.decode("utf-8").split("\\n")]
-        refs = source_refs.line_references(lines)
+        raw_lines = [line.rstrip("\r") for line in data.decode("utf-8").split("\n")]
+        lines = [library.norm(line) for line in raw_lines]
+        refs = source_refs.line_references(raw_lines)
     except (UnicodeDecodeError, ValueError) as exc:
         err(f"קובץ המקור או הכותרות אינם תקינים: {exc}")
         return errs
