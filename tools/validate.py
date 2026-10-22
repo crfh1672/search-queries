@@ -31,6 +31,7 @@ SPLITS = {"test", "train"}
 YESNO = {"כן", "לא"}
 META_KEYS = library.SOURCE_META_KEYS
 LINE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
+ID_RE = re.compile(r"^[a-z]+-\d{3,}$")
 
 
 class DuplicateJSONKeyError(ValueError):
