@@ -112,7 +112,7 @@ class ScoreInputTests(unittest.TestCase):
             book2 = data_root / "מדרש" / "ספר נוסף"
             book2.mkdir(parents=True)
             (book2 / "ספר נוסף.jsonl").write_text(
-                json.dumps(query_record("book-002", "q2")) + "\\n",
+                json.dumps(query_record("book-002", "q2")) + "\n",
                 encoding="utf-8",
             )
             results = Path(temp) / "results.csv"
@@ -162,6 +162,55 @@ class ScoreInputTests(unittest.TestCase):
                 self.skipTest(f"directory symlink is unavailable: {exc}")
             loaded = score.load_data(alias / "datasets")
             self.assertEqual(set(loaded), {"book-001"})
+
+
+    def test_loader_ignores_symlinked_category_directory_with_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data_root = root / "datasets"
+            data_root.mkdir()
+            outside_category = root / "outside-category"
+            book = outside_category / "ספר"
+            book.mkdir(parents=True)
+            (book / "ספר.jsonl").write_text(
+                json.dumps(query_record("book-001", "query")) + "\n",
+                encoding="utf-8",
+            )
+            link = data_root / "הלכה"
+            try:
+                link.symlink_to(outside_category, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rows = score.load_data(data_root)
+            self.assertEqual(rows, {})
+            self.assertIn("Warning", stderr.getvalue())
+            self.assertIn(str(link), stderr.getvalue())
+
+    def test_loader_ignores_symlinked_book_directory_with_warning(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            data_root = root / "datasets"
+            category = data_root / "הלכה"
+            category.mkdir(parents=True)
+            outside_book = root / "outside-book"
+            outside_book.mkdir()
+            (outside_book / "ספר.jsonl").write_text(
+                json.dumps(query_record("book-001", "query")) + "\n",
+                encoding="utf-8",
+            )
+            link = category / "ספר"
+            try:
+                link.symlink_to(outside_book, target_is_directory=True)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"directory symlink is unavailable: {exc}")
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rows = score.load_data(data_root)
+            self.assertEqual(rows, {})
+            self.assertIn("Warning", stderr.getvalue())
+            self.assertIn(str(link), stderr.getvalue())
 
     def test_loader_refuses_symlinked_data_root(self):
         with tempfile.TemporaryDirectory() as temp:
