@@ -1,4 +1,5 @@
 import csv, json, os, shutil, sys, tempfile, unittest
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import validate
 import source_refs
@@ -207,6 +208,11 @@ class SourceChecks(Base):
             f.write("{")
         self.assertTrue(self.has("בדיקה.מקור.json: JSON לא תקין"))
 
+    def test_non_object_source_json_is_reported_without_crashing(self):
+        with open(os.path.join(self.d, NAME + ".מקור.json"), "w", encoding="utf-8") as f:
+            f.write("null")
+        self.assertTrue(self.has("המטא־נתונים חייבים להיות אובייקט JSON"))
+
     def test_commit_must_be_full_sha(self):
         p = os.path.join(self.d, NAME + ".מקור.json")
         with open(p, encoding="utf-8") as f:
@@ -267,6 +273,23 @@ class SourceChecks(Base):
         with open(os.path.join(target, "ספר שהונח ברמה שגויה.jsonl"), "w", encoding="utf-8") as handle:
             handle.write("{}\n")
         self.assertIn(target, {str(path) for path in validate.dataset_dirs(root)})
+
+    def test_dataset_discovery_does_not_follow_symlinked_book(self):
+        root = os.path.join(self.tmp, "datasets")
+        category = os.path.join(root, "הלכה")
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(category)
+        os.makedirs(outside)
+        with open(os.path.join(outside, "ספר.jsonl"), "w", encoding="utf-8") as handle:
+            handle.write("{}
+")
+        link = os.path.join(category, "ספר")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        self.assertNotIn(Path(link), validate.dataset_dirs(root))
+        self.assertIn(Path(link), validate.symlink_entries(root))
 
 
 
