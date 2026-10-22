@@ -1,3 +1,5 @@
+import contextlib
+import io
 import os
 import sys
 import tempfile
@@ -140,8 +142,12 @@ class MappingTests(unittest.TestCase):
                 ["update_sources.py", "--datasets-dir", str(root), "--report", str(report)],
             ):
                 with patch.object(update_sources, "update_dataset") as update:
-                    with self.assertRaisesRegex(SystemExit, "") if False else contextlib.nullcontext():
-                        pass
+                    with contextlib.redirect_stderr(io.StringIO()):
+                        result = update_sources.main()
+            self.assertEqual(result, 1)
+            update.assert_not_called()
+            self.assertEqual(outside_report.read_text(encoding="utf-8"), "keep me")
+
     def test_updater_rejects_symlinked_dataset_contents(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
