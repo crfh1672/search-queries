@@ -79,7 +79,7 @@ def validate_source_origin(meta):
             f"book_name must match the Otzaria library filename stem {expected_book_name!r}"
         )
     if not isinstance(meta.get("origin_commit"), str) or not re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"]):
-        raise ValueError("origin_commit must be a full 40-character SHA")
+        raise ValueError("origin_commit חייב להיות SHA מלא (40 תווים)")
     if not isinstance(meta.get("origin_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", meta["origin_sha256"]):
         raise ValueError("origin_sha256 must be a full 64-character SHA-256")
     return category
