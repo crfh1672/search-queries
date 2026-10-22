@@ -76,8 +76,8 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     if not re.fullmatch(r"[a-z]+", meta["id_prefix"]):
         err(f"{f_meta}: id_prefix חייב להכיל אותיות לטיניות קטנות בלבד")
         return errs
-    if not meta["book_name"].strip() or not meta["note"] == meta["note"]:
-        err(f"{f_meta}: book_name או note אינם תקינים")
+    if not meta["book_name"].strip():
+        err(f"{f_meta}: book_name אינו יכול להיות ריק")
         return errs
     if not (isinstance(meta.get("origin_commit"), str) and re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"])):
         err(f"{f_meta}: origin_commit חייב להיות SHA מלא של קומיט (40 תווים)")
