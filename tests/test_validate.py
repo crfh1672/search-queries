@@ -119,6 +119,12 @@ class JsonlChecks(Base):
             f.write("{not json}\n")
         self.assertTrue(self.has("JSON לא תקין"))
 
+    def test_duplicate_keys_in_jsonl_are_rejected(self):
+        with open(os.path.join(self.d, NAME + ".jsonl"), "w", encoding="utf-8") as f:
+            f.write('{"id":"first","id":"second"}
+')
+        self.assertTrue(self.has("duplicate JSON key"))
+
     def test_extra_field(self):
         rows = self.load(); rows[0]["extra"] = "x"; self.save(rows)
         self.assertTrue(self.has("שדות מיותרים ['extra']"))
@@ -225,6 +231,11 @@ class SourceChecks(Base):
         with open(os.path.join(self.d, NAME + ".מקור.json"), "w", encoding="utf-8") as f:
             f.write("null")
         self.assertTrue(self.has("המטא־נתונים חייבים להיות אובייקט JSON"))
+
+    def test_duplicate_keys_in_source_json_are_rejected(self):
+        with open(os.path.join(self.d, NAME + ".מקור.json"), "w", encoding="utf-8") as f:
+            f.write('{"book_name":"בדיקה","book_name":"שונה"}')
+        self.assertTrue(self.has("JSON לא תקין"))
 
     def test_commit_must_be_full_sha(self):
         p = os.path.join(self.d, NAME + ".מקור.json")
