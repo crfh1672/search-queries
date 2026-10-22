@@ -4,7 +4,7 @@ from pathlib import PurePosixPath
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 CACHE_DIR = os.path.join(ROOT, ".cache", "library")
-NIK = re.compile(r"[\\u0591-\\u05C7]")
+NIK = re.compile(r"[\u0591-\u05C7]")
 TAG = re.compile(r"<[^>]+>")
 CANONICAL_REPO = "Otzaria/otzaria-library"
 CANONICAL_REPO_URL = "https://github.com/Otzaria/otzaria-library"
@@ -18,7 +18,7 @@ def norm(s):
     """הסרת תגיות וניקוד, ואחידות בגרשיים ובשם השם המפורש."""
     s = NIK.sub("", TAG.sub("", s))
     s = s.replace("״", '"').replace("׳", "'").replace("יהוה", "ה'")
-    return re.sub(r"\\s+", " ", s).strip()
+    return re.sub(r"\s+", " ", s).strip()
 
 
 def repo_slug(value):
@@ -39,7 +39,7 @@ def source_category_from_path(origin_path):
     """Return the top-level category under a committed ספרים/אוצריא directory."""
     if not isinstance(origin_path, str) or not origin_path:
         raise ValueError("origin_path must be a non-empty repository-relative path")
-    if "\\\\" in origin_path or origin_path.startswith("/"):
+    if "\\" in origin_path or origin_path.startswith("/"):
         raise ValueError("origin_path must use a relative POSIX path")
     path = PurePosixPath(origin_path)
     if any(part in {"", ".", ".."} for part in path.parts):
@@ -95,7 +95,7 @@ def fetch(meta, ref):
 
 def cache_path(slug, meta):
     identity = hashlib.sha256(
-        (repo_slug(meta["origin_repo"]) + "\\0" + meta["origin_path"]).encode("utf-8")
+        (repo_slug(meta["origin_repo"]) + "\0" + meta["origin_path"]).encode("utf-8")
     ).hexdigest()[:16]
     return os.path.join(CACHE_DIR, f"source-{identity}-{meta['origin_commit'][:10]}.txt")
 
