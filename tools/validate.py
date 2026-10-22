@@ -235,7 +235,10 @@ def dataset_dirs(root):
     root = Path(root)
     if not root.exists():
         return []
-    return sorted({p.parent for p in root.rglob("*.מקור.json")})
+    return sorted(
+        {p.parent for p in root.rglob("*.מקור.json")} |
+        {p for p in root.glob("*/*") if p.is_dir()}
+    )
 
 
 def discover_target(path):
