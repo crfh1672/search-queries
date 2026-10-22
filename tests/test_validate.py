@@ -121,8 +121,7 @@ class JsonlChecks(Base):
 
     def test_duplicate_keys_in_jsonl_are_rejected(self):
         with open(os.path.join(self.d, NAME + ".jsonl"), "w", encoding="utf-8") as f:
-            f.write('{"id":"first","id":"second"}
-')
+            f.write('{"id":"first","id":"second"}\n')
         self.assertTrue(self.has("duplicate JSON key"))
 
     def test_extra_field(self):
