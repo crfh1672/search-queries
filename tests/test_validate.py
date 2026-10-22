@@ -1,6 +1,7 @@
 import csv, json, os, shutil, sys, tempfile, unittest
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "tools"))
 import validate
+import source_refs
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 FIXTURE = os.path.join(HERE, "fixture", "בדיקה")
@@ -44,35 +45,28 @@ class Valid(Base):
         # השורה בספרייה כוללת ניקוד, תגיות ו"יהוה", והציטוט כתוב בלי ניקוד וב"ה'"
         self.assertEqual(self.errs(), [])
 
-    def test_page_numeral_punctuation_is_normalized(self):
-        ranges = validate.amud_ranges([
-            "דף י״א.",
-            "טקסט",
-            "דף י״א:",
+    def test_heading_paths_follow_hierarchy(self):
+        refs = source_refs.line_references([
+            "<h1>כתר ראש</h1>",
+            "<h2>הלכות ציצית</h2>",
+            "<h3>סימן א</h3>",
+            "טקסט בתוך הסימן",
+            "<h4>סעיף קטן א</h4>",
+            "טקסט נוסף",
+            "<h3>סימן ב</h3>",
             "המשך",
         ])
-        self.assertEqual(ranges[("יא", "א")], (1, 2))
-        self.assertEqual(ranges[("יא", "ב")], (3, 4))
+        self.assertEqual(refs[3], "הלכות ציצית > סימן א")
+        self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
+        self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
-    def test_malformed_page_heading_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "malformed page heading at source line 3"):
-            validate.amud_ranges([
-                "דף א.",
+    def test_malformed_empty_heading_fails_closed(self):
+        with self.assertRaisesRegex(ValueError, "malformed heading at source line 3"):
+            source_refs.line_references([
+                "<h1>ספר</h1>",
+                "<h2>פרק</h2>",
+                "<h3></h3>",
                 "טקסט",
-                'דף ״.',
-                "טקסט שלא צריך להשתייך לדף א",
-            ])
-
-    def test_duplicate_normalized_page_heading_fails_closed(self):
-        with self.assertRaisesRegex(
-            ValueError,
-            'duplicate normalized page heading יא ע"א at source lines 1 and 3',
-        ):
-            validate.amud_ranges([
-                "דף י״א.",
-                "טקסט",
-                "דף יא.",
-                "המשך",
             ])
 
 
@@ -114,12 +108,12 @@ class JsonlChecks(Base):
         rows = self.load(); rows[0]["query"] = ""; self.save(rows)
         self.assertTrue(self.has("השדה query ריק"))
 
-    def test_ref_for_other_masechet(self):
-        rows = self.load(); rows[0]["correct_ref"] = 'מגילה ב ע"א'; self.save(rows)
-        self.assertTrue(self.has("correct_ref לא תקין"))
+    def test_ref_for_wrong_heading(self):
+        rows = self.load(); rows[0]["correct_ref"] = "כותרת שאינה קיימת"; self.save(rows)
+        self.assertTrue(self.has("אינו תואם למסלול הכותרות"))
 
     def test_same_amud_flag_inconsistent(self):
-        rows = self.load(); rows[0]["near_miss_same_amud"] = "כן"; self.save(rows)
+        rows = self.load(); rows[0]["near_miss_same_section"] = "כן"; self.save(rows)
         self.assertTrue(self.has("לא עקבי"))
 
 
@@ -199,7 +193,7 @@ class SourceChecks(Base):
         for ext in (".jsonl", ".csv", ".מקור.json"):
             shutil.copy(os.path.join(self.d, NAME + ext), os.path.join(other, "אחרת" + ext))
         errs = validate.validate_dataset(other, loader=lambda d, m: (self.lib, None))
-        self.assertTrue(any("חייב להיות זהה לשם המסכת" in e for e in errs))
+        self.assertTrue(any("חייב להיות זהה ל-book_name" in e for e in errs))
 
     def test_library_file_changed(self):
         self.assertTrue(self.has("שונה מ-origin_sha256", loader=lambda d, m: (self.lib + "\nעוד".encode("utf-8"), None)))
