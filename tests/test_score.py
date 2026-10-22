@@ -13,6 +13,23 @@ sys.path.insert(0, os.path.abspath(TOOLS))
 import score
 
 
+def query_record(identifier, query):
+    return {
+        "id": identifier,
+        "query": query,
+        "type": "short",
+        "correct_ref": "פתיחת הספר",
+        "correct_quote": "quote",
+        "correct_line": "1",
+        "near_miss_ref": "פתיחת הספר",
+        "near_miss_quote": "near miss",
+        "near_miss_line": "2",
+        "near_miss_same_section": "כן",
+        "split": "train",
+        "verified_by_human": "test verifier",
+    }
+
+
 class ScoreInputTests(unittest.TestCase):
     def test_score_rejects_results_without_rows(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -42,7 +59,7 @@ class ScoreInputTests(unittest.TestCase):
             book = Path(temp) / "הלכה" / "ספר"
             book.mkdir(parents=True)
             (book / "ספר.jsonl").write_text(
-                '{"id":"book-001","type":"short","query":"valid"}\nnot-json\n',
+                json.dumps(query_record("book-001", "valid")) + "\nnot-json\n",
                 encoding="utf-8",
             )
             with self.assertRaisesRegex(ValueError, "canonical dataset file"):
@@ -54,7 +71,7 @@ class ScoreInputTests(unittest.TestCase):
                 directory = Path(temp) / category / book
                 directory.mkdir(parents=True)
                 (directory / f"{book}.jsonl").write_text(
-                    '{"id":"duplicate-001","type":"short","query":"q"}\n',
+                    json.dumps(query_record("duplicate-001", "q")) + "\n",
                     encoding="utf-8",
                 )
             with self.assertRaisesRegex(ValueError, "duplicate query ID"):
@@ -67,7 +84,7 @@ class ScoreInputTests(unittest.TestCase):
             category = actual / "הלכה" / "ספר"
             category.mkdir(parents=True)
             (category / "ספר.jsonl").write_text(
-                '{"id":"book-001","type":"short","query":"query"}\n',
+                json.dumps(query_record("book-001", "query")) + "\n",
                 encoding="utf-8",
             )
             link = Path(temp) / "linked"
@@ -86,7 +103,7 @@ class ScoreInputTests(unittest.TestCase):
             book = Path(temp) / "הלכה" / "ספר"
             book.mkdir(parents=True)
             (book / "ספר.jsonl").write_text(
-                json.dumps({"id": "book-001", "type": "short", "query": "query"}) + "\n",
+                json.dumps(query_record("book-001", "query")) + "\n",
                 encoding="utf-8",
             )
             (book / "backup.jsonl").write_text(
