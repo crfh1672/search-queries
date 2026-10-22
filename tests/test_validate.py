@@ -100,9 +100,9 @@ class JsonlChecks(Base):
         rows = self.load(); rows[1]["id"] = rows[0]["id"]; self.save(rows)
         self.assertTrue(self.has("id כפול"))
 
-    def test_line_in_wrong_amud(self):
+    def test_line_in_wrong_heading(self):
         rows = self.load(); rows[0]["correct_line"] = "7"; self.save(rows)
-        self.assertTrue(self.has("אינו בתוך"))
+        self.assertTrue(self.has("אינו תואם למסלול הכותרות"))
 
     def test_line_outside_file(self):
         rows = self.load(); rows[0]["correct_line"] = "999"; self.save(rows)
@@ -124,7 +124,7 @@ class JsonlChecks(Base):
         rows = self.load(); rows[0]["correct_ref"] = "כותרת שאינה קיימת"; self.save(rows)
         self.assertTrue(self.has("אינו תואם למסלול הכותרות"))
 
-    def test_same_amud_flag_inconsistent(self):
+    def test_same_section_flag_inconsistent(self):
         rows = self.load(); rows[0]["near_miss_same_section"] = "כן"; self.save(rows)
         self.assertTrue(self.has("לא עקבי"))
 
@@ -211,7 +211,7 @@ class SourceChecks(Base):
         self.assertTrue(self.has("שונה מ-origin_sha256", loader=lambda d, m: (self.lib + "\nעוד".encode("utf-8"), None)))
 
     def test_library_unavailable(self):
-        self.assertTrue(self.has("קובץ הספרייה: לא ניתן", loader=lambda d, m: (None, "לא ניתן למשוך")))
+        self.assertTrue(self.has("קובץ המקור מאוצריא: לא ניתן למשוך", loader=lambda d, m: (None, "לא ניתן למשוך")))
 
     def test_only_otzaria_sources_are_accepted(self):
         p = os.path.join(self.d, NAME + ".מקור.json")
