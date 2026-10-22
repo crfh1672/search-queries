@@ -28,7 +28,7 @@ The metadata file is `<book_name>.מקור.json` and requires exactly: `book_nam
 
 ## Heading-based references
 
-Otzaria `.txt` files use physical lines as content units and whole-line heading markup such as `<h1>` through `<h6>`. Parse the heading hierarchy from the raw source before removing HTML tags. Store `correct_ref` and `near_miss_ref` as the current visible heading path for their citation lines, such as `הלכות ציצית > סימן א` or, when the underlying Talmud file uses that heading, `דף ב.`.
+Otzaria `.txt` files use physical lines as content units and whole-line heading markup such as `<h1>` through `<h6>`. Parse the heading hierarchy from the raw source before removing HTML tags. Store `correct_ref` and `near_miss_ref` as the current heading path for their citation lines, such as `הלכות ציצית > סימן א` or, when the underlying Talmud file uses that heading, `דף ב.`. HTML heading text has tags removed but otherwise preserves the source title. Markdown heading references include the leading hashes (for example, `## Chapter`); level-1 headings map to `פתיחת הספר`.
 
 Line fields contain absolute 1-based physical source line numbers or ranges. The quote text can be normalized for matching, but the line numbers and heading path must be derived from the entire source at the pinned commit, not a snippet or reformatted copy.
 
@@ -38,7 +38,7 @@ If the heading structure does not support a stable reference, preserve the exact
 
 Each record is an evaluation item, not merely a question/answer:
 - Choose a specific claim or fact that the source passage supports.
-- Write a natural query with meaningful lexical diversity but no added assumptions.
+- Write a natural query with meaningful lexical diversity but no added assumptions. Preserve meaning-critical qualifiers, conditions, negations, and named entities; lexical diversity must not change what the query asks.
 - Select a short exact quote as evidence for the correct answer.
 - Find a plausible near miss from the same pinned book that is topically or lexically similar but does not answer the query.
 - If no defensible near miss exists, skip the record or flag it for human review; do not fabricate one.
