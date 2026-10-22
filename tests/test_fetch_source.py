@@ -1,10 +1,51 @@
 import os
 import sys
+import tempfile
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 sys.path.insert(0, os.path.abspath(TOOLS))
 import fetch_source
+
+
+class DatasetPathSafetyTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.original_root = fetch_source.REPO_ROOT
+        fetch_source.REPO_ROOT = self.root
+
+    def tearDown(self):
+        fetch_source.REPO_ROOT = self.original_root
+        self.temp.cleanup()
+
+    def test_resolve_dataset_rejects_symlinked_book_directory(self):
+        category = self.root / "datasets" / "הלכה"
+        category.mkdir(parents=True)
+        outside = self.root.parent / (self.root.name + "-outside")
+        outside.mkdir()
+        link = category / "ספר"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        with self.assertRaisesRegex(SystemExit, "symlink או junction"):
+            fetch_source.resolve_dataset("datasets/הלכה/ספר")
+
+    def test_resolve_dataset_rejects_symlinked_metadata_file(self):
+        book = self.root / "datasets" / "הלכה" / "ספר"
+        book.mkdir(parents=True)
+        outside = self.root.parent / (self.root.name + "-metadata.json")
+        outside.write_text('{"book_name":"ספר"}', encoding="utf-8")
+        try:
+            (book / "ספר.מקור.json").symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"file symlink is unavailable: {exc}")
+        with self.assertRaisesRegex(SystemExit, "symlink או junction"):
+            fetch_source.resolve_dataset("datasets/הלכה/ספר")
 
 
 class SourceDiffTests(unittest.TestCase):
