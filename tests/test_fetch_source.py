@@ -86,6 +86,28 @@ class SourceDiffTests(unittest.TestCase):
                 b"<h2>Chapter</h2>\n<h3></h3>\n",
             )
 
+    def test_touched_query_loader_checks_ranges_and_returns_matching_ids(self):
+        row = {field: "value" for field in fetch_source.validate.FIELDS}
+        row["id"] = "book-001"
+        row["correct_line"] = "2-3"
+        row["near_miss_line"] = "8"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "book.jsonl"
+            path.write_text(json.dumps(row, ensure_ascii=False) + "\\n", encoding="utf-8")
+            self.assertEqual(fetch_source.touched_query_ids(path, [3]), {"book-001"})
+            self.assertEqual(fetch_source.touched_query_ids(path, [6]), set())
+
+    def test_touched_query_loader_rejects_invalid_ranges(self):
+        row = {field: "value" for field in fetch_source.validate.FIELDS}
+        row["id"] = "book-001"
+        row["correct_line"] = "5-2"
+        row["near_miss_line"] = "8"
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "book.jsonl"
+            path.write_text(json.dumps(row, ensure_ascii=False) + "\\n", encoding="utf-8")
+            with self.assertRaisesRegex(SystemExit, "invalid line range"):
+                fetch_source.touched_query_ids(path, [5])
+
 
 if __name__ == "__main__":
     unittest.main()
