@@ -1,7 +1,10 @@
 import os
 import sys
+import tempfile
 import types
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 TOOLS = os.path.join(os.path.dirname(__file__), "..", "tools")
 sys.path.insert(0, os.path.abspath(TOOLS))
@@ -117,6 +120,48 @@ class MappingTests(unittest.TestCase):
                 row, "correct", lines, lines,
                 update_sources.line_map(lines, lines), "book", refs, section_ids,
             )
+
+    def test_read_rows_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "book.jsonl"
+            path.write_text(
+                '{"id":"book-001","id":"book-002"}\\n',
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(update_sources.UpdateProblem, "duplicate JSON key"):
+                update_sources.read_rows(path)
+
+    def test_write_dataset_rolls_back_if_replacement_fails(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            name = "ספר"
+            originals = {
+                f"{name}.jsonl": b"old jsonl\\n",
+                f"{name}.csv": b"old csv\\n",
+                f"{name}.מקור.json": b'{"old":true}\\n',
+            }
+            for filename, payload in originals.items():
+                (directory / filename).write_bytes(payload)
+
+            row = {field: "" for field in update_sources.FIELDS}
+            row.update({"id": "book-001", "query": "q", "type": "short"})
+            meta = {"book_name": name}
+            real_replace = os.replace
+            calls = {"count": 0}
+
+            def fail_second_replace(src, dst):
+                calls["count"] += 1
+                if calls["count"] == 2:
+                    raise OSError("simulated replacement failure")
+                return real_replace(src, dst)
+
+            with patch.object(update_sources.os, "replace", side_effect=fail_second_replace):
+                with self.assertRaisesRegex(update_sources.UpdateProblem, "original files restored"):
+                    update_sources.write_dataset(directory, name, [row], meta)
+
+            for filename, payload in originals.items():
+                self.assertEqual((directory / filename).read_bytes(), payload)
+            self.assertFalse(any(p.name.endswith(".tmp") for p in directory.iterdir()))
 
 
 
