@@ -41,9 +41,9 @@ def source_category_from_path(origin_path):
         raise ValueError("origin_path must be a non-empty repository-relative path")
     if "\\" in origin_path or origin_path.startswith("/"):
         raise ValueError("origin_path must use a relative POSIX path")
-    path = PurePosixPath(origin_path)
-    if any(part in {"", ".", ".."} for part in path.parts):
+    if any(part in {"", ".", ".."} for part in origin_path.split("/")):
         raise ValueError("origin_path must not contain empty, '.' or '..' path parts")
+    path = PurePosixPath(origin_path)
     if path.suffix.lower() != ".txt":
         raise ValueError("origin_path must point to an Otzaria .txt book")
     matches = [
@@ -63,8 +63,7 @@ def source_category_from_path(origin_path):
 
 def validate_source_origin(meta):
     """Fail unless provenance points to a .txt book in the Otzaria library repository."""
-    slug = repo_slug(meta.get("origin_repo"))
-    if slug != CANONICAL_REPO:
+    if meta.get("origin_repo") != CANONICAL_REPO_URL:
         raise ValueError(
             f"origin_repo must be {CANONICAL_REPO_URL}; got {meta.get('origin_repo')!r}"
         )
@@ -79,6 +78,10 @@ def validate_source_origin(meta):
         raise ValueError(
             f"book_name must match the Otzaria library filename stem {expected_book_name!r}"
         )
+    if not isinstance(meta.get("origin_commit"), str) or not re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"]):
+        raise ValueError("origin_commit must be a full 40-character SHA")
+    if not isinstance(meta.get("origin_sha256"), str) or not re.fullmatch(r"[0-9a-f]{64}", meta["origin_sha256"]):
+        raise ValueError("origin_sha256 must be a full 64-character SHA-256")
     return category
 
 
