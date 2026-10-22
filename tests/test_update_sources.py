@@ -62,16 +62,30 @@ class MappingTests(unittest.TestCase):
         row = {"correct_line": "12", "near_miss_line": "13"}
         update_sources.ensure_citations_do_not_overlap(row)
 
-    def test_hebrew_numeral_punctuation_is_normalized(self):
-        lines = ["כותרת", "דף י״א.", "קטע", "דף י״א:", "עוד"]
+    def test_heading_path_reference_is_derived_from_nested_toc(self):
+        lines = [
+            "<h1>כתר ראש</h1>",
+            "<h2>הלכות ציצית</h2>",
+            "<h3>סימן א</h3>",
+            "טקסט בתוך הסימן",
+            "<h4>סעיף קטן א</h4>",
+            "עוד טקסט",
+            "<h3>סימן ב</h3>",
+            "המשך",
+        ]
         self.assertEqual(
-            update_sources.reference_for_line(lines, 3, "בדיקה"),
-            'בדיקה יא ע"א',
+            update_sources.reference_for_line(lines, 4, "כתר ראש"),
+            "הלכות ציצית > סימן א",
         )
         self.assertEqual(
-            update_sources.reference_for_line(lines, 5, "בדיקה"),
-            'בדיקה יא ע"ב',
+            update_sources.reference_for_line(lines, 6, "כתר ראש"),
+            "הלכות ציצית > סימן א > סעיף קטן א",
         )
+        self.assertEqual(
+            update_sources.reference_for_line(lines, 8, "כתר ראש"),
+            "הלכות ציצית > סימן ב",
+        )
+
 
 
 if __name__ == "__main__":
