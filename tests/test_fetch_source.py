@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -93,7 +94,7 @@ class SourceDiffTests(unittest.TestCase):
         row["near_miss_line"] = "8"
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "book.jsonl"
-            path.write_text(json.dumps(row, ensure_ascii=False) + "\\n", encoding="utf-8")
+            path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
             self.assertEqual(fetch_source.touched_query_ids(path, [3]), {"book-001"})
             self.assertEqual(fetch_source.touched_query_ids(path, [6]), set())
 
@@ -104,7 +105,7 @@ class SourceDiffTests(unittest.TestCase):
         row["near_miss_line"] = "8"
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "book.jsonl"
-            path.write_text(json.dumps(row, ensure_ascii=False) + "\\n", encoding="utf-8")
+            path.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
             with self.assertRaisesRegex(SystemExit, "invalid line range"):
                 fetch_source.touched_query_ids(path, [5])
 
