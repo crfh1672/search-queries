@@ -14,6 +14,8 @@
 import argparse, csv, glob, json, os, collections, sys
 from pathlib import Path
 
+import validate
+
 
 def is_path_link(path):
     path = os.path.abspath(path)
@@ -57,9 +59,15 @@ def load_data(data_dir="datasets"):
             with open(p, encoding="utf-8") as f:
                 for line_number, line in enumerate(f, 1):
                     if line.strip():
-                        r = json.loads(line)
-                        if not isinstance(r, dict) or not isinstance(r.get("id"), str):
-                            raise ValueError(f"{p}:{line_number}: each record must be an object with a string id")
+                        r = json.loads(line, object_pairs_hook=validate.unique_json_object)
+                        if not isinstance(r, dict) or list(r.keys()) != validate.FIELDS:
+                            raise ValueError(
+                                f"{p}:{line_number}: record does not match the 12-field query schema"
+                            )
+                        if any(not isinstance(r[key], str) for key in validate.FIELDS):
+                            raise ValueError(f"{p}:{line_number}: all query fields must be strings")
+                        if not r["id"] or not r["query"] or r["type"] not in {"short", "conceptual"}:
+                            raise ValueError(f"{p}:{line_number}: id/query/type is empty or invalid")
                         if r["id"] in seen_in_file or r["id"] in rows:
                             raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")
                         seen_in_file.add(r["id"])
