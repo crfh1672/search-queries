@@ -235,10 +235,15 @@ def dataset_dirs(root):
     root = Path(root)
     if not root.exists():
         return []
-    return sorted(
-        {p.parent for p in root.rglob("*.מקור.json")} |
-        {p for p in root.glob("*/*") if p.is_dir()}
+    # Include canonical nested book folders, plus misplaced depth-1 folders
+    # that contain JSONL files so their missing metadata/path layout is reported.
+    candidates = {p.parent for p in root.rglob("*.מקור.json")}
+    candidates.update(p for p in root.glob("*/*") if p.is_dir())
+    candidates.update(
+        p for p in root.glob("*")
+        if p.is_dir() and any(p.glob("*.jsonl"))
     )
+    return sorted(candidates)
 
 
 def discover_target(path):
