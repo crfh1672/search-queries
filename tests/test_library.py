@@ -2,6 +2,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+import urllib.parse
 from pathlib import Path
 from unittest.mock import patch
 
@@ -91,6 +92,72 @@ class PinnedSourceCacheTests(unittest.TestCase):
         self.assertIsNone(data)
         self.assertIn("origin_sha256", error)
         self.assertFalse(Path(library.CACHE_DIR).exists())
+
+
+class ShadowingTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name) / "repo"
+        self.root.mkdir()
+        self.old_root, self.old_cache = library.ROOT, library.CACHE_DIR
+        library.ROOT = str(self.root)
+        library.CACHE_DIR = str(self.root / ".cache" / "library")
+        self.meta = {
+            "book_name": "Book", "source_category": "הלכה", "id_prefix": "book",
+            "origin_repo": library.CANONICAL_REPO_URL,
+            "origin_path": "OraytaToOtzaria/ספרים/אוצריא/הלכה/Book.txt",
+            "origin_commit": "a" * 40, "origin_sha256": "b" * 64, "note": "",
+        }
+
+    def tearDown(self):
+        library.ROOT, library.CACHE_DIR = self.old_root, self.old_cache
+        self.temp.cleanup()
+
+    def opener_for(self, present_roots, calls):
+        import urllib.error
+
+        def opener(request, timeout=0):
+            url = urllib.parse.unquote(request.full_url)
+            calls.append(url)
+            if any(f"/{root}/ספרים/אוצריא/" in url for root in present_roots):
+                class Ok:
+                    def __enter__(self): return self
+                    def __exit__(self, *a): return False
+                return Ok()
+            raise urllib.error.HTTPError(request.full_url, 404, "nf", {}, None)
+        return opener
+
+    def test_only_later_roots_are_checked_and_hits_are_reported(self):
+        calls = []
+        result = library.shadowing_roots(self.meta, opener=self.opener_for({"MoreBooks"}, calls))
+        self.assertEqual(result, ["MoreBooks"])
+        checked = [c for c in calls]
+        self.assertTrue(all("/OraytaToOtzaria/" not in c for c in checked))
+        self.assertEqual(len(checked), len(library.PACKAGED_ROOTS) - library.PACKAGED_ROOTS.index("OraytaToOtzaria") - 1)
+
+    def test_not_shadowed_returns_empty_list(self):
+        self.assertEqual(library.shadowing_roots(self.meta, opener=self.opener_for(set(), [])), [])
+
+    def test_last_root_can_never_be_shadowed_and_needs_no_requests(self):
+        meta = dict(self.meta, origin_path="BeitAharonVeYisraelToOtzaria/ספרים/אוצריא/הלכה/Book.txt")
+        calls = []
+        self.assertEqual(library.shadowing_roots(meta, opener=self.opener_for(set(), calls)), [])
+        self.assertEqual(calls, [])
+
+    def test_answer_is_cached_and_reused_offline(self):
+        library.shadowing_roots(self.meta, opener=self.opener_for({"KSK"}, []))
+        self.assertEqual(library.shadowing_roots(self.meta, offline=True), ["KSK"])
+
+    def test_offline_without_cache_is_unknown(self):
+        self.assertIsNone(library.shadowing_roots(self.meta, offline=True))
+
+    def test_server_error_propagates_instead_of_passing_silently(self):
+        import urllib.error
+
+        def broken(request, timeout=0):
+            raise urllib.error.HTTPError(request.full_url, 500, "boom", {}, None)
+        with self.assertRaises(urllib.error.HTTPError):
+            library.shadowing_roots(self.meta, opener=broken)
 
 
 if __name__ == "__main__":

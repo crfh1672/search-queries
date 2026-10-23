@@ -21,6 +21,7 @@ from pathlib import Path
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 import library  # noqa: E402
+import pathsafe  # noqa: E402
 import source_refs  # noqa: E402
 import validate  # noqa: E402
 
@@ -38,26 +39,14 @@ class UpdateProblem(Exception):
 
 
 def path_has_link_component(path: Path) -> Path | None:
-    path = Path(path).absolute()
-    for component in reversed((path, *path.parents)):
-        if library.is_path_link(component):
-            return component
-    return None
+    return pathsafe.link_component(path)
 
 
 def reject_symlink_tree(directory: Path) -> None:
     if path_has_link_component(directory) is not None:
         raise UpdateProblem(f"dataset path contains a symlink or junction: {directory}")
-    for current, dirs, files in os.walk(directory, followlinks=False):
-        base = Path(current)
-        for name in list(dirs):
-            candidate = base / name
-            if library.is_path_link(candidate):
-                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
-        for name in files:
-            candidate = base / name
-            if library.is_path_link(candidate):
-                raise UpdateProblem(f"dataset contains a symlink or junction: {candidate}")
+    for link in pathsafe.links_in_tree(directory):
+        raise UpdateProblem(f"dataset contains a symlink or junction: {link}")
 
 
 def normalized_lines(raw: bytes) -> list[str]:
@@ -157,7 +146,7 @@ def map_citation(
     try:
         ref = source_refs.span_reference(references, start, end, section_ids)
     except ValueError as exc:
-        raise UpdateProblem(f"{prefix} quote crosses an Otzaria heading boundary: {exc}") from exc
+        raise UpdateProblem(f"{prefix} quote cannot be cited under the new heading structure: {exc}") from exc
     row[line_key] = str(start) if start == end else f"{start}-{end}"
     row[ref_key] = ref
 
@@ -239,7 +228,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
         # Capture every original before replacing any file. Refuse symlinked or
         # non-regular targets rather than reading/writing through a redirect.
         for target, _ in targets:
-            if library.is_path_link(target):
+            if pathsafe.is_link(target):
                 raise UpdateProblem(f"refusing to replace symlink/junction: {target}")
             info = target.lstat()
             if not os.path.isfile(target) or not stat.S_ISREG(info.st_mode):
@@ -282,7 +271,7 @@ def write_dataset(directory: Path, name: str, rows: list[dict[str, str]], meta: 
 
         reject_symlink_tree(directory)
         for target, _ in targets:
-            if library.is_path_link(target):
+            if pathsafe.is_link(target):
                 raise UpdateProblem(f"output became a symlink/junction during refresh: {target}")
             os.replace(staged[target], target)
             replaced.append(target)
@@ -355,10 +344,7 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
         raise UpdateProblem(f"cannot load pinned source: {problem or 'unknown error'}")
     old, new = normalized_lines(old_raw), normalized_lines(new_raw)
     new_reference_lines = new_raw.decode("utf-8").split("\n")
-    try:
-        new_references, new_section_ids = source_refs.line_reference_data(new_reference_lines)
-    except ValueError as exc:
-        raise UpdateProblem(f"candidate source headings are invalid: {exc}") from exc
+    new_references, new_section_ids = source_refs.line_reference_data(new_reference_lines)
     mapping, rows, issues = line_map(old, new), read_rows(jsonl_path), []
     for row in rows:
         original = dict(row)
@@ -366,7 +352,11 @@ def update_dataset(directory: Path, ref: str) -> tuple[str, str | None]:
             map_citation(row, "correct", old, new, mapping, name, new_references, new_section_ids)
             map_citation(row, "near_miss", old, new, mapping, name, new_references, new_section_ids)
             ensure_citations_do_not_overlap(row)
-            row["near_miss_same_section"] = "כן" if row["correct_ref"] == row["near_miss_ref"] else "לא"
+            same_section = (
+                new_section_ids[parse_span(row["correct_line"])[0] - 1]
+                == new_section_ids[parse_span(row["near_miss_line"])[0] - 1]
+            )
+            row["near_miss_same_section"] = "כן" if same_section else "לא"
         except UpdateProblem as exc:
             issues.append(f"- {row['id']} ({row['query']}): {exc}")
             row.clear()

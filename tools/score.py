@@ -14,29 +14,19 @@
 import argparse, csv, glob, json, os, collections, sys
 from pathlib import Path
 
+import pathsafe
 import validate
 
 
 def has_link_below_root(path, root):
     """Check the data root and its descendants, not unrelated OS ancestors."""
-    path = Path(path)
-    root = Path(root)
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return validate.is_path_link(path)
-    current = root
-    for component in relative.parts[:-1]:
-        current = current / component
-        if validate.is_path_link(current):
-            return True
-    return validate.is_path_link(path)
+    return pathsafe.link_component(path, root) is not None
 
 
 def load_data(data_dir="datasets"):
     rows = {}
     root = os.path.abspath(data_dir)
-    if validate.is_path_link(root):
+    if pathsafe.is_link(root):
         print(f"Warning: refusing to read through a symlink or junction: {root!r}", file=sys.stderr)
         return rows
     # Only load the canonical file at datasets/<category>/<book>/<book>.jsonl.
@@ -90,8 +80,9 @@ def load_data(data_dir="datasets"):
                             raise ValueError(f"{p}:{line_number}: invalid citation range: {exc}") from exc
                         if not (correct_end < near_start or near_end < correct_start):
                             raise ValueError(f"{p}:{line_number}: citation ranges overlap")
-                        same_ref = r["correct_ref"] == r["near_miss_ref"]
-                        if (r["near_miss_same_section"] == "כן") != same_ref:
+                        # score.py has no source text, so it can only catch the
+                        # impossible case; validate.py checks the exact section IDs.
+                        if r["near_miss_same_section"] == "כן" and r["correct_ref"] != r["near_miss_ref"]:
                             raise ValueError(f"{p}:{line_number}: near-miss section flag disagrees with references")
                         if r["id"] in seen_in_file or r["id"] in rows:
                             raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")

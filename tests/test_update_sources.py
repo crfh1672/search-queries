@@ -225,5 +225,22 @@ class MappingTests(unittest.TestCase):
 
 
 
+    def test_citation_under_malformed_new_heading_needs_manual_review(self):
+        lines = ["<h1>B</h1>", "<h2>A</h2>", "x", "<h3><br></h3>", "quote"]
+        refs, ids = source_refs.line_reference_data(lines)
+        row = {"correct_line": "5", "correct_quote": "quote", "correct_ref": ""}
+        plain = ["B", "A", "x", "", "quote"]
+        with self.assertRaisesRegex(update_sources.UpdateProblem, "malformed heading"):
+            update_sources.map_citation(
+                row, "correct", plain, plain, update_sources.line_map(plain, plain), "book", refs, ids,
+            )
+
+    def test_section_flag_is_recomputed_from_section_ids_not_ref_strings(self):
+        lines = ["<h1>B</h1>", "<h3>הלכה א</h3>", "first", "<h3>הלכה א</h3>", "second"]
+        refs, ids = source_refs.line_reference_data(lines)
+        self.assertEqual(refs[2], refs[4])
+        self.assertNotEqual(ids[2], ids[4])
+
+
 if __name__ == "__main__":
     unittest.main()

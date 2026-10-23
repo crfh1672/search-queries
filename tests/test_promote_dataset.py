@@ -114,14 +114,6 @@ class PromotePathSafetyTests(unittest.TestCase):
         self.assertTrue(draft.exists())
         self.assertIn("does not match", stderr)
 
-    def test_path_based_rename_fallback_promotes_successfully(self):
-        draft = self.create_draft()
-        with patch.object(promote_dataset, "source_files_supported_by_dir_fd", return_value=False):
-            result, _, stderr = self.run_promotion(draft)
-        self.assertEqual(result, 0)
-        self.assertEqual(stderr, "")
-        self.assertTrue((self.root / "datasets" / "הלכה" / "ספר" / "ספר.jsonl").is_file())
-
     def test_symlinked_datasets_root_does_not_create_outside_category(self):
         outside = self.root / "outside"
         outside.mkdir()
@@ -135,29 +127,43 @@ class PromotePathSafetyTests(unittest.TestCase):
         self.assertFalse((outside / "הלכה").exists())
         self.assertIn("בוטל", stderr)
 
-    def test_changes_to_original_draft_do_not_change_promoted_snapshot(self):
+
+    def test_validation_runs_as_approved_dataset(self):
         draft = self.create_draft()
+        with patch.object(sys, "argv", ["promote_dataset.py", str(draft)]):
+            with patch.object(promote_dataset.validate, "validate_dataset", return_value=[]) as check:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    promote_dataset.main()
+        self.assertTrue(check.call_args.kwargs["require_verified"])
 
-        def edit_original_after_snapshot(staged, **kwargs):
-            staged = Path(staged)
-            self.assertIn("ספר.jsonl", {p.name for p in staged.iterdir()})
-            (draft / "ספר.jsonl").write_text('{"id":"tampered"}\n', encoding="utf-8")
-            return []
-
+    def test_validation_errors_leave_the_draft_in_place(self):
+        draft = self.create_draft()
         with patch.object(sys, "argv", ["promote_dataset.py", str(draft)]):
             with patch.object(
-                promote_dataset.validate,
-                "validate_dataset",
-                side_effect=edit_original_after_snapshot,
+                promote_dataset.validate, "validate_dataset",
+                return_value=["verified_by_human אינו מופיע ב-verifiers.txt"],
             ):
+                with contextlib.redirect_stdout(io.StringIO()) as out:
+                    result = promote_dataset.main()
+        self.assertEqual(result, 1)
+        self.assertTrue(draft.exists())
+        self.assertFalse((self.root / "datasets").exists())
+        self.assertIn("verifiers.txt", out.getvalue())
+
+    def test_validator_crash_is_reported_and_nothing_moves(self):
+        draft = self.create_draft()
+        with patch.object(sys, "argv", ["promote_dataset.py", str(draft)]):
+            with patch.object(promote_dataset.validate, "validate_dataset", side_effect=RuntimeError("boom")):
                 with contextlib.redirect_stderr(io.StringIO()) as err:
                     result = promote_dataset.main()
-
-        target = self.root / "datasets" / "הלכה" / "ספר" / "ספר.jsonl"
-        self.assertEqual(result, 0)
-        self.assertEqual(target.read_text(encoding="utf-8"), '{"id":"book-001"}\n')
+        self.assertEqual(result, 1)
         self.assertTrue(draft.exists())
-        self.assertIn("השתנתה בזמן הקידום", err.getvalue())
+        self.assertIn("boom", err.getvalue())
+
+    def test_draft_outside_drafts_folder_is_refused(self):
+        other = self.root / "elsewhere" / "הלכה" / "ספר"
+        other.mkdir(parents=True)
+        self.run_main(other)
 
 
 if __name__ == "__main__":

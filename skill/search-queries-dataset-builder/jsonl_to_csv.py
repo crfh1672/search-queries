@@ -121,8 +121,10 @@ def load_records(path: Path) -> list[dict[str, str]]:
                     f"{path}:{line_number}: correct and near-miss ranges overlap"
                 )
 
-            same_ref = record["correct_ref"] == record["near_miss_ref"]
-            if (record["near_miss_same_section"] == "כן") != same_ref:
+            # Without the source text only the impossible case can be caught;
+            # tools/validate.py checks the exact section identity.
+            if (record["near_miss_same_section"] == "כן"
+                    and record["correct_ref"] != record["near_miss_ref"]):
                 raise ValueError(
                     f"{path}:{line_number}: near_miss_same_section disagrees with references"
                 )

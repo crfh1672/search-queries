@@ -93,12 +93,12 @@ class SourceDiffTests(unittest.TestCase):
         )
         self.assertEqual(diff, [3])
 
-    def test_malformed_heading_fails_with_value_error(self):
-        with self.assertRaisesRegex(ValueError, "malformed heading"):
-            fetch_source.compare_source_lines(
-                b"<h2>Chapter</h2>\ntext\n",
-                b"<h2>Chapter</h2>\n<h3></h3>\n",
-            )
+    def test_malformed_heading_is_reported_as_a_change_without_failing(self):
+        _, _, diff = fetch_source.compare_source_lines(
+            b"<h2>Chapter</h2>\ntext\n",
+            b"<h2>Chapter</h2>\n<h3><br></h3>\ntext\n",
+        )
+        self.assertIn(2, diff)
 
     def test_touched_query_loader_checks_ranges_and_returns_matching_ids(self):
         row = {field: "value" for field in fetch_source.validate.FIELDS}

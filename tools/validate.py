@@ -20,6 +20,7 @@ from pathlib import Path
 TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, TOOLS_DIR)
 import library
+import pathsafe
 import source_refs
 
 FIELDS = ["id", "query", "type", "correct_ref", "correct_quote", "correct_line",
@@ -47,12 +48,24 @@ def unique_json_object(pairs):
     return result
 
 
-def is_path_link(path):
-    path = Path(path)
-    if path.is_symlink():
-        return True
-    is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
+is_path_link = pathsafe.is_link
+VERIFIERS_FILE = Path(TOOLS_DIR).parent / "verifiers.txt"
+
+
+def load_verifiers(path=None):
+    """Names allowed in verified_by_human for approved datasets (verifiers.txt).
+
+    One name per line; blank lines and lines starting with # are ignored.
+    """
+    path = Path(path or VERIFIERS_FILE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return set()
+    return {
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
 
 
 def span(s, max_line=None):
@@ -71,10 +84,15 @@ def span(s, max_line=None):
     return a, b
 
 
-def validate_dataset(d, loader=None, offline=False, require_verified=None):
+def validate_dataset(d, loader=None, offline=False, require_verified=None,
+                     verifiers=None, shadow_check=None):
     """Validate a dataset against a pinned .txt book from Otzaria's library.
 
     loader(d, meta) -> (bytes, error) lets unit tests replace network fetching.
+    verifiers: names accepted in verified_by_human for approved datasets
+        (default: verifiers.txt at the repository root).
+    shadow_check(meta) -> list of later packaged roots overriding the pinned
+        file; by default the library is queried (skipped when a loader is given).
     """
     errs = []
     def err(msg): errs.append(f"{d}: {msg}")
@@ -166,14 +184,32 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
     if hashlib.sha256(data).hexdigest() != meta["origin_sha256"]:
         err(f"קובץ המקור שונה מ-origin_sha256 שב-{f_meta}")
         return errs
+    if shadow_check is None and loader is None:
+        def shadow_check(m):
+            return library.shadowing_roots(m, offline=offline)
+    if shadow_check is not None:
+        try:
+            shadowed = shadow_check(meta)
+        except Exception as exc:
+            err(f"לא ניתן לבדוק אם הקובץ נדרס על ידי שורש מאוחר בספרייה ({type(exc).__name__}: {exc}); "
+                "אפשר להריץ עם --offline אם התשובה כבר במטמון")
+            return errs
+        if shadowed:
+            err(f"הקובץ הנעוץ נדרס בספרייה המשוחררת על ידי עותק באותו נתיב יחסי תחת: {', '.join(shadowed)}. "
+                "המשתמש רואה את העותק האחר, לכן יש להצמיד אותו במקום")
+            return errs
     try:
         raw_lines = [line.rstrip("\r") for line in data.decode("utf-8").split("\n")]
-        lines = [library.norm(line) for line in raw_lines]
-        refs, section_ids = source_refs.line_reference_data(raw_lines)
-    except (UnicodeDecodeError, ValueError) as exc:
-        err(f"קובץ המקור או הכותרות אינם תקינים: {exc}")
+    except UnicodeDecodeError as exc:
+        err(f"קובץ המקור אינו UTF-8 תקין: {exc}")
         return errs
+    lines = [library.norm(line) for line in raw_lines]
+    index = source_refs.analyze(raw_lines)
+    refs, section_ids = index.references, index.section_ids
     prefix = meta["id_prefix"]
+    allowed = None
+    if require_verified:
+        allowed = load_verifiers() if verifiers is None else set(verifiers)
 
     # --- JSONL ---
     rows = []
@@ -232,8 +268,13 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
         if r["type"] not in TYPES: err(f"{w}: type לא חוקי ({r['type']})")
         if r["split"] not in SPLITS: err(f"{w}: split לא חוקי ({r['split']})")
         if r["near_miss_same_section"] not in YESNO: err(f"{w}: near_miss_same_section חייב להיות כן/לא")
-        if require_verified and not r["verified_by_human"].strip():
-            err(f"{w}: מערך מאושר חייב לכלול verified_by_human")
+        if require_verified:
+            verifier = r["verified_by_human"].strip()
+            if not verifier:
+                err(f"{w}: מערך מאושר חייב לכלול verified_by_human")
+            elif verifier not in allowed:
+                err(f"{w}: verified_by_human ({verifier!r}) אינו מופיע ב-verifiers.txt. "
+                    "רק אדם שנרשם שם והשווה בפועל את הרשומה למקור יכול לאשר")
         if r["correct_quote"] == r["near_miss_quote"]:
             err(f"{w}: הציטוט הנכון והכמעט נכון זהים")
         for which in ("correct", "near_miss"):
@@ -246,6 +287,11 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
                 err(f"{w}: {which}_line לא תקין ({exc})"); continue
             if b > len(lines):
                 err(f"{w}: {which}_line מחוץ לקובץ ({line_s})"); continue
+            unresolved = next((ln for ln in range(a, b + 1) if refs[ln - 1] is None), None)
+            if unresolved is not None:
+                err(f"{w}: {which}_line {line_s} נשען על מבנה כותרות לא ודאי בשורה {unresolved}: "
+                    f"{source_refs.explain_ambiguity(index.problems, unresolved)}")
+                continue
             expected_ref = refs[a - 1]
             if ref != expected_ref:
                 err(f"{w}: {which}_ref אינו תואם למסלול הכותרות בשורה {a} ({ref!r} במקום {expected_ref!r})")
@@ -276,9 +322,24 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
             if not (cb < na or nb < ca):
                 err(f"{w}: הציטוט הנכון והכמעט נכון נמצאים באותה שורה "
                     f"({r['correct_line']} / {r['near_miss_line']}). שלילי חייב להיות משורה אחרת")
-        same = r["correct_ref"] == r["near_miss_ref"]
-        if r["near_miss_same_section"] in YESNO and (r["near_miss_same_section"] == "כן") != same:
-            err(f"{w}: near_miss_same_section לא עקבי עם ה-refs")
+        # "כן" means both citations sit in the very same section instance. Two
+        # sibling headings with an identical title give identical refs but are
+        # different sections, so the comparison uses section IDs, not strings.
+        flag = r["near_miss_same_section"]
+        if flag in YESNO:
+            same = None
+            try:
+                first_c = span(r["correct_line"])[0]
+                first_n = span(r["near_miss_line"])[0]
+                if max(first_c, first_n) <= len(section_ids):
+                    sec_c, sec_n = section_ids[first_c - 1], section_ids[first_n - 1]
+                    if sec_c is not None and sec_n is not None:
+                        same = sec_c == sec_n
+            except ValueError:
+                pass  # malformed ranges are reported above
+            if same is not None and (flag == "כן") != same:
+                err(f"{w}: near_miss_same_section לא עקבי עם מקטעי המקור "
+                    f"('כן' רק כששני הציטוטים באותו מקטע, גם אם הכותרות זהות במראה)")
 
     # --- CSV ---
     try:
@@ -319,24 +380,7 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None):
 
 def symlink_entries(root):
     """List symbolic links without traversing them."""
-    root = Path(root)
-    if is_path_link(root):
-        return [root]
-    if not root.is_dir():
-        return []
-    found = []
-    for current, dirs, files in os.walk(root, followlinks=False):
-        base = Path(current)
-        for name in list(dirs):
-            candidate = base / name
-            if is_path_link(candidate):
-                found.append(candidate)
-                dirs.remove(name)
-        for name in files:
-            candidate = base / name
-            if is_path_link(candidate):
-                found.append(candidate)
-    return sorted(found)
+    return pathsafe.links_in_tree(root)
 
 
 def dataset_dirs(root):
@@ -360,14 +404,45 @@ def dataset_dirs(root):
 
 
 def path_symlink_component(path):
-    path = Path(path).absolute()
-    for component in reversed((path, *path.parents)):
+    return pathsafe.link_component(path)
+
+
+def cross_dataset_errors(directories):
+    """id_prefix and every query id must be unique across ALL datasets.
+
+    score.py merges results by id, so a collision between two books (or a draft
+    and its approved copy) would silently mix their measurements.
+    """
+    prefixes, ids, errors = {}, {}, []
+    for directory in sorted({Path(d) for d in directories}):
+        name = directory.name
         try:
-            if is_path_link(component):
-                return component
-        except OSError:
-            continue
-    return None
+            meta = json.loads((directory / f"{name}.מקור.json").read_text(encoding="utf-8"),
+                              object_pairs_hook=unique_json_object)
+            prefix = meta.get("id_prefix") if isinstance(meta, dict) else None
+        except (OSError, ValueError):
+            prefix = None  # validate_dataset reports unreadable metadata
+        if isinstance(prefix, str):
+            if prefix in prefixes:
+                errors.append(f"{directory}: id_prefix {prefix!r} כבר בשימוש ב-{prefixes[prefix]}")
+            else:
+                prefixes[prefix] = directory
+        try:
+            with open(directory / f"{name}.jsonl", encoding="utf-8-sig") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line, object_pairs_hook=unique_json_object)
+                    rid = row.get("id") if isinstance(row, dict) else None
+                    if not isinstance(rid, str):
+                        continue
+                    if rid in ids and ids[rid] != directory:
+                        errors.append(f"{directory}: ה-id {rid} כבר קיים ב-{ids[rid]}")
+                    else:
+                        ids[rid] = directory
+        except (OSError, ValueError):
+            continue  # validate_dataset reports unreadable JSONL
+    return errors
 
 
 def discover_target(path):
@@ -438,6 +513,7 @@ def main(argv):
                 all_errs.append(f"{jp}: לא ניתן לספור שורות ({exc})")
         print(f"{'✗' if e else '✓'} {target}  ({len(e)} בעיות)")
         all_errs += e
+    all_errs += cross_dataset_errors(Path(value) for value in unique)
     for error in all_errs[:60]:
         print(" -", error)
     if len(all_errs) > 60:

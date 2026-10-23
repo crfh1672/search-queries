@@ -1,10 +1,13 @@
 """גישה לקובצי ספרים ב-Otzaria, עם pin לקומיט ול-hash ולנירמול אחיד."""
-import hashlib, os, re, stat, tempfile, urllib.parse, urllib.request
+import hashlib, json, os, re, stat, tempfile, urllib.error, urllib.parse, urllib.request
 from pathlib import Path, PurePosixPath
+
+import pathsafe
+from pathsafe import is_link as is_path_link  # noqa: F401  (kept for older callers)
 
 ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 CACHE_DIR = os.path.join(ROOT, ".cache", "library")
-NIK = re.compile(r"[\u0591-\u05C7]")
+NIK = re.compile(r"[֑-ׇ]")
 TAG = re.compile(r"<[^>]+>")
 CANONICAL_REPO = "Otzaria/otzaria-library"
 CANONICAL_REPO_URL = "https://github.com/Otzaria/otzaria-library"
@@ -12,6 +15,34 @@ SOURCE_META_KEYS = {
     "book_name", "source_category", "id_prefix", "origin_repo", "origin_path",
     "origin_commit", "origin_sha256", "note",
 }
+
+# The source roots that Otzaria's release build merges into the library the
+# application ships (BOOK_ROOTS in otzaria-library/manual_links_packaging.py;
+# keep in the same order). Every root contributes <root>/ספרים/אוצריא/…, and a
+# LATER root overrides an EARLIER one for the same relative path.
+#
+# NOT packaged, therefore never valid sources here: extraBooks/, docxToOtzaria/,
+# DictaToOtzaria/לא ערוך/, MoreBooks/ספרים/ outside אוצריא/, and any
+# <source>/ספרים/<something other than אוצריא>/ such as ספרים/לא ממויין/.
+PACKAGED_ROOTS = (
+    "Ben-YehudaToOtzaria",
+    "DictaToOtzaria/ערוך",
+    "OnYourWayToOtzaria",
+    "OraytaToOtzaria",
+    "tashmaToOtzaria",
+    "sefariaToOtzaria/sefaria_export",
+    "sefariaToOtzaria/sefaria_api",
+    "MoreBooks",
+    "KSK",
+    "wikiJewishBooksToOtzaria",
+    "wikisourceToOtzaria",
+    "ToratEmetToOtzaria",
+    "pninimToOtzaria",
+    "National-LibraryToOtzaria",
+    "yam-HaHachmaToOtzaria",
+    "BeitAharonVeYisraelToOtzaria",
+)
+LIBRARY_DIR = ("ספרים", "אוצריא")
 
 
 def norm(s):
@@ -35,8 +66,18 @@ def repo_slug(value):
     return f"{parts[0]}/{parts[1].removesuffix('.git')}"
 
 
-def source_category_from_path(origin_path):
-    """Return the top-level category under a committed ספרים/אוצריא directory."""
+def schema_origin_path_pattern():
+    """The regex that schema/source.schema.json must carry for origin_path."""
+    roots = "|".join(re.escape(root) for root in PACKAGED_ROOTS)
+    return (
+        r"^(?!.*\\)(?!.*(?:^|/)\.{1,2}(?:/|$))"
+        r"(?!.*(?:^|/)ספרים/אוצריא/.*(?:^|/)ספרים/אוצריא/)"
+        rf"(?:{roots})/ספרים/אוצריא/[^/]+/.+\.txt$"
+    )
+
+
+def split_packaged_path(origin_path):
+    """Return (root_index, parts_below_library_dir) for a packaged book path."""
     if not isinstance(origin_path, str) or not origin_path:
         raise ValueError("origin_path must be a non-empty repository-relative path")
     if "\\" in origin_path or origin_path.startswith("/"):
@@ -46,23 +87,35 @@ def source_category_from_path(origin_path):
     path = PurePosixPath(origin_path)
     if path.suffix != ".txt":
         raise ValueError("origin_path must point to an Otzaria .txt book")
-    matches = [
-        i for i in range(len(path.parts) - 1)
-        if path.parts[i] == "ספרים" and path.parts[i + 1] == "אוצריא"
-    ]
-    if len(matches) != 1:
-        raise ValueError("origin_path must be inside a committed ספרים/אוצריא/ book directory")
-    category_index = matches[0] + 2
-    if category_index >= len(path.parts) - 1:
+    for index, root in enumerate(PACKAGED_ROOTS):
+        prefix = tuple(root.split("/")) + LIBRARY_DIR
+        if path.parts[: len(prefix)] == prefix:
+            below = path.parts[len(prefix):]
+            break
+    else:
+        raise ValueError(
+            "origin_path must be <packaged source root>/ספרים/אוצריא/<category>/…; "
+            "extraBooks/, DictaToOtzaria/לא ערוך/ and ספרים/<not אוצריא>/ are not "
+            f"part of the shipped library (packaged roots: {', '.join(PACKAGED_ROOTS)})"
+        )
+    if len(below) < 2:
         raise ValueError("origin_path must include a category and a book filename after ספרים/אוצריא/")
-    category = path.parts[category_index].strip()
+    if any(below[i:i + 2] == LIBRARY_DIR for i in range(len(below) - 1)):
+        raise ValueError("origin_path must not repeat ספרים/אוצריא/")
+    return index, below
+
+
+def source_category_from_path(origin_path):
+    """Return the top-level category under a packaged ספרים/אוצריא directory."""
+    _, below = split_packaged_path(origin_path)
+    category = below[0].strip()
     if not category:
         raise ValueError("could not determine source category from origin_path")
     return category
 
 
 def validate_source_origin(meta):
-    """Fail unless provenance points to a .txt book in the Otzaria library repository."""
+    """Fail unless provenance points to a packaged .txt book in the Otzaria library repository."""
     if meta.get("origin_repo") != CANONICAL_REPO_URL:
         raise ValueError(
             f"origin_repo must be {CANONICAL_REPO_URL}; got {meta.get('origin_repo')!r}"
@@ -96,14 +149,6 @@ def fetch(meta, ref):
         return response.read()
 
 
-def is_path_link(path):
-    path = Path(path)
-    if path.is_symlink():
-        return True
-    is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
-
-
 def safe_cache_directory(create=False):
     """Return the cache directory only if every existing component stays in this repo."""
     root = Path(ROOT).resolve(strict=True)
@@ -131,8 +176,6 @@ def read_cache_file(path, expected_hash):
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         fd = os.open(path, flags)
-    except FileNotFoundError:
-        return None
     except OSError:
         return None
     try:
@@ -146,11 +189,6 @@ def read_cache_file(path, expected_hash):
                 break
             chunks.append(chunk)
         data = b"".join(chunks)
-        after = os.fstat(fd)
-        if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns) != (
-            after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns
-        ):
-            return None
         if hashlib.sha256(data).hexdigest() != expected_hash:
             return None
         return data
@@ -160,11 +198,32 @@ def read_cache_file(path, expected_hash):
         os.close(fd)
 
 
-def cache_path(slug, meta):
-    identity = hashlib.sha256(
+def _cache_identity(meta):
+    return hashlib.sha256(
         (repo_slug(meta["origin_repo"]) + "\0" + meta["origin_path"]).encode("utf-8")
     ).hexdigest()[:16]
-    return os.path.join(CACHE_DIR, f"source-{identity}-{meta['origin_commit'][:10]}.txt")
+
+
+def cache_path(slug, meta):
+    return os.path.join(CACHE_DIR, f"source-{_cache_identity(meta)}-{meta['origin_commit'][:10]}.txt")
+
+
+def _write_cache_atomic(name, data):
+    """Best-effort atomic cache write; a failure never invalidates a verified read."""
+    try:
+        cache_dir = safe_cache_directory(create=True)
+        fd, temporary = tempfile.mkstemp(prefix=".cache-", suffix=".tmp", dir=cache_dir)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(data)
+            os.replace(temporary, Path(cache_dir) / name)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+    except (OSError, ValueError):
+        pass
 
 
 def get_pinned(slug, meta, offline=False):
@@ -197,25 +256,53 @@ def get_pinned(slug, meta, offline=False):
         return None, f"לא ניתן למשוך את קובץ המקור ({type(exc).__name__}: {exc})"
     if hashlib.sha256(data).hexdigest() != want:
         return None, "קובץ המקור שונה מ-origin_sha256 שבקובץ המטא־נתונים"
-
-    # Cache is an optimization, never a reason to trust or overwrite a symlink.
-    try:
-        cache_dir = safe_cache_directory(create=True)
-        cache_file = Path(cache_dir) / Path(cp).name
-        fd, temporary = tempfile.mkstemp(prefix=".source-", suffix=".tmp", dir=cache_dir)
-        try:
-            with os.fdopen(fd, "wb") as handle:
-                handle.write(data)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, cache_file)
-        finally:
-            try:
-                os.unlink(temporary)
-            except FileNotFoundError:
-                pass
-    except (OSError, ValueError):
-        # The fetched bytes have already been hash-verified; a blocked cache
-        # write should not invalidate a successful source read.
-        pass
+    _write_cache_atomic(Path(cp).name, data)
     return data, None
+
+
+# --- shadowing -------------------------------------------------------------
+
+def _exists_at(url, opener):
+    request = urllib.request.Request(url, method="HEAD")
+    try:
+        with opener(request, timeout=60):
+            return True
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            return False
+        raise
+
+
+def shadowing_roots(meta, offline=False, opener=None):
+    """Later packaged roots that hold the same relative path at the pinned commit.
+
+    A non-empty result means the release build overwrites the pinned file with
+    another copy, so the text a user sees is not the text the dataset cites.
+    Returns None when the answer is unknown (offline without a cached answer).
+    Results are cached because a commit is immutable.
+    """
+    index, below = split_packaged_path(meta["origin_path"])
+    name = f"shadow-{_cache_identity(meta)}-{meta['origin_commit'][:10]}.json"
+    try:
+        cache_dir = safe_cache_directory(create=False)
+    except (OSError, ValueError):
+        cache_dir = None
+    if cache_dir is not None:
+        cached = Path(cache_dir) / name
+        if not is_path_link(cached) and cached.is_file():
+            try:
+                roots = json.loads(cached.read_text(encoding="utf-8"))
+                if isinstance(roots, list) and all(isinstance(r, str) for r in roots):
+                    return roots
+            except (OSError, ValueError):
+                pass
+    if offline:
+        return None
+    opener = opener or urllib.request.urlopen
+    shadows = []
+    for later in PACKAGED_ROOTS[index + 1:]:
+        candidate = dict(meta, origin_path="/".join((later, *LIBRARY_DIR, *below)))
+        if _exists_at(raw_url(candidate, meta["origin_commit"]), opener):
+            shadows.append(later)
+    _write_cache_atomic(name, json.dumps(shadows).encode("utf-8"))
+    return shadows

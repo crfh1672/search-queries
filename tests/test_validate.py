@@ -61,15 +61,21 @@ class Valid(Base):
         self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
         self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
-    def test_skipped_heading_level_keeps_nearest_ancestor(self):
+    def test_skipped_heading_level_stays_without_parent(self):
+        # Otzaria's tree: a heading that skips a level has no parent.
         refs = source_refs.line_references([
             "<h1>ספר</h1>",
             "<h2>A</h2>",
             "<h4>B</h4>",
             "body",
+            "<h5>C</h5>",
+            "child",
+            "<h3>D</h3>",
         ])
-        self.assertEqual(refs[2], "A > B")
-        self.assertEqual(refs[3], "A > B")
+        self.assertEqual(refs[2], "B")
+        self.assertEqual(refs[3], "B")
+        self.assertEqual(refs[5], "B > C")
+        self.assertEqual(refs[6], "A > D")
 
     def test_heading_reference_preserves_visible_title(self):
         refs = source_refs.line_references([
@@ -91,18 +97,49 @@ class Valid(Base):
         with self.assertRaisesRegex(ValueError, "repeated-heading boundary"):
             source_refs.span_reference(refs, 2, 4, section_ids)
 
-    def test_malformed_empty_heading_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "malformed heading at source line 3"):
-            source_refs.line_references([
-                "<h1>ספר</h1>",
-                "<h2>פרק</h2>",
-                "<h3></h3>",
-                "טקסט",
-            ])
+    def test_malformed_heading_does_not_fail_the_whole_book(self):
+        index = source_refs.analyze([
+            "<h1>ספר</h1>",       # 1
+            "<h2>פרק א</h2>",     # 2
+            "גוף א",              # 3
+            "<h3><br></h3>",      # 4 malformed
+            "גוף לא ודאי",        # 5 ambiguous
+            "<h2>פרק ב</h2>",     # 6 recovers
+            "גוף ב",              # 7
+        ])
+        self.assertEqual(index.references[2], "פרק א")
+        self.assertEqual(index.references[3:5], [None, None])
+        self.assertEqual(index.references[5:], ["פרק ב", "פרק ב"])
+        self.assertEqual(list(index.problems), [4])
+        with self.assertRaisesRegex(ValueError, "malformed heading"):
+            source_refs.span_reference(index.references, 4, 5, index.section_ids)
+        self.assertIn("source line 4", source_refs.explain_ambiguity(index.problems, 5))
 
-    def test_empty_markdown_heading_fails_closed(self):
-        with self.assertRaisesRegex(ValueError, "malformed heading at source line 2"):
-            source_refs.line_references(["<h1>ספר</h1>", "## ", "טקסט"])
+    def test_deeper_heading_after_malformed_one_stays_ambiguous(self):
+        refs = source_refs.line_references([
+            "<h1>ספר</h1>", "<h2>פרק</h2>", "<h2", "<h3>סימן</h3>", "טקסט", "<h2>הבא</h2>",
+        ])
+        self.assertEqual(refs[2:5], [None, None, None])
+        self.assertEqual(refs[5], "הבא")
+
+    def test_unterminated_tag_is_malformed_not_fatal(self):
+        index = source_refs.analyze(["<h1>ספר</h1>", "<h2 class=x", "טקסט"])
+        self.assertEqual(index.references, ["פתיחת הספר", None, None])
+
+    def test_markdown_hash_lines_are_ordinary_body_text(self):
+        # Otzaria builds its TOC from <h1>-<h6> only; '#' lines never reset the path.
+        index = source_refs.analyze([
+            "<h1>ספר</h1>", "<h2>סימן א</h2>", "# הערה: טקסט", "#", "## ", "אחרי",
+        ])
+        self.assertEqual(index.references[2:], ["סימן א"] * 4)
+        self.assertEqual(index.problems, {})
+
+    def test_sibling_headings_with_same_title_are_different_sections(self):
+        refs, ids = source_refs.line_reference_data([
+            "<h1>ספר</h1>", "<h3>הלכה א</h3>", "a", "<h3>הלכה א</h3>", "b",
+        ])
+        self.assertEqual(refs[2], refs[4])
+        self.assertNotEqual(ids[2], ids[4])
 
     def test_toc_excluded_heading_does_not_replace_reference(self):
         refs = source_refs.line_references([
@@ -349,6 +386,203 @@ class SourceChecks(Base):
             self.skipTest(f"directory symlink is unavailable: {exc}")
         self.assertNotIn(Path(link), validate.dataset_dirs(root))
         self.assertIn(Path(link), validate.symlink_entries(root))
+
+
+
+class SourceCase(Base):
+    """Helper: replace the fixture source and the first record in one call."""
+
+    def use_source(self, text, correct, near, flag):
+        import hashlib
+        self.lib = text.encode("utf-8")
+        meta_path = os.path.join(self.d, NAME + ".מקור.json")
+        with open(meta_path, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_sha256"] = hashlib.sha256(self.lib).hexdigest()
+        with open(meta_path, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        row = self.load()[0]
+        row.update(
+            correct_ref=correct[0], correct_line=correct[1], correct_quote=correct[2],
+            near_miss_ref=near[0], near_miss_line=near[1], near_miss_quote=near[2],
+            near_miss_same_section=flag,
+        )
+        self.save([row])
+        with open(os.path.join(self.d, NAME + ".csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, lineterminator="\r\n")
+            w.writerow(validate.FIELDS)
+            w.writerow([row[k] for k in validate.FIELDS])
+
+
+SIBLINGS = (
+    "<h1>ספר</h1>\n<h3>הלכה א</h3>\nמשפט ראשון על נושא א.\n"
+    "<h3>הלכה א</h3>\nמשפט שני על נושא ב.\nעוד משפט בהלכה השנייה.\n"
+)
+FIRST = ("הלכה א", "3", "משפט ראשון על נושא א")
+SECOND = ("הלכה א", "5", "משפט שני על נושא ב")
+SECOND_LATER = ("הלכה א", "6", "עוד משפט בהלכה השנייה")
+
+
+class SectionFlag(SourceCase):
+    """near_miss_same_section compares section identity, not ref strings."""
+
+    def test_identical_refs_in_sibling_sections_must_be_marked_different(self):
+        self.use_source(SIBLINGS, FIRST, SECOND, "כן")
+        self.assertTrue(self.has("לא עקבי עם מקטעי המקור"))
+
+    def test_identical_refs_in_sibling_sections_marked_no_is_accepted(self):
+        self.use_source(SIBLINGS, FIRST, SECOND, "לא")
+        self.assertEqual(self.errs(), [])
+
+    def test_same_section_marked_yes_is_accepted(self):
+        self.use_source(SIBLINGS, SECOND, SECOND_LATER, "כן")
+        self.assertEqual(self.errs(), [])
+
+    def test_same_section_marked_no_is_rejected(self):
+        self.use_source(SIBLINGS, SECOND, SECOND_LATER, "לא")
+        self.assertTrue(self.has("לא עקבי עם מקטעי המקור"))
+
+
+class MalformedHeadingCitations(SourceCase):
+    SRC = (
+        "<h1>ספר</h1>\n<h2>פרק א</h2>\nמשפט ראשון על נושא א.\n"
+        "<h3><br></h3>\nמשפט שני על נושא ב.\n"
+    )
+
+    def test_citation_under_malformed_heading_is_rejected_but_book_still_loads(self):
+        self.use_source(
+            self.SRC,
+            ("פרק א", "3", "משפט ראשון על נושא א"),
+            ("פרק א", "5", "משפט שני על נושא ב"),
+            "כן",
+        )
+        errors = self.errs()
+        self.assertTrue(
+            any("near_miss_line" in e and "מבנה כותרות לא ודאי" in e and "source line 4" in e for e in errors),
+            errors,
+        )
+        # the healthy citation (line 3) produces no error of its own
+        self.assertFalse(any("correct_line" in e or "correct_ref" in e for e in errors), errors)
+
+
+class Verifiers(Base):
+    def approved(self, verifiers):
+        rows = self.load()
+        for r in rows:
+            r["verified_by_human"] = "ד. כהן"
+        self.save(rows)
+        return validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), require_verified=True, verifiers=verifiers
+        )
+
+    def test_listed_verifier_is_accepted(self):
+        # CSV must mirror JSONL, so rewrite it too.
+        rows = self.load()
+        for r in rows:
+            r["verified_by_human"] = "ד. כהן"
+        self.save(rows)
+        with open(os.path.join(self.d, NAME + ".csv"), "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f, lineterminator="\r\n")
+            w.writerow(validate.FIELDS)
+            for r in rows:
+                w.writerow([r[k] for k in validate.FIELDS])
+        errs = validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), require_verified=True, verifiers={"ד. כהן"}
+        )
+        self.assertEqual(errs, [])
+
+    def test_unlisted_verifier_is_rejected(self):
+        errs = self.approved({"מישהו אחר"})
+        self.assertTrue(any("אינו מופיע ב-verifiers.txt" in e for e in errs))
+
+    def test_empty_allowlist_rejects_everyone(self):
+        errs = self.approved(set())
+        self.assertTrue(any("אינו מופיע ב-verifiers.txt" in e for e in errs))
+
+    def test_load_verifiers_ignores_comments_and_blanks(self):
+        path = os.path.join(self.tmp, "verifiers.txt")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("# header\n\n  ד. כהן  \n#x\nש. לוי\n")
+        self.assertEqual(validate.load_verifiers(path), {"ד. כהן", "ש. לוי"})
+        self.assertEqual(validate.load_verifiers(os.path.join(self.tmp, "missing.txt")), set())
+
+
+class SourceGate(Base):
+    def set_path(self, origin_path):
+        p = os.path.join(self.d, NAME + ".מקור.json")
+        with open(p, encoding="utf-8") as f:
+            meta = json.load(f)
+        meta["origin_path"] = origin_path
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+
+    def test_unpackaged_extrabooks_root_is_rejected(self):
+        self.set_path("extraBooks/SefariaToOtzaria/sefaria_export/ספרים/אוצריא/בדיקה/בדיקה.txt")
+        self.assertTrue(self.has("origin_path must be <packaged source root>"))
+
+    def test_dicta_unedited_root_is_rejected(self):
+        self.set_path("DictaToOtzaria/לא ערוך/ספרים/אוצריא/בדיקה/בדיקה.txt")
+        self.assertTrue(self.has("not part of the shipped library"))
+
+    def test_unsorted_folder_under_a_packaged_root_is_rejected(self):
+        self.set_path("OraytaToOtzaria/ספרים/לא ממויין/בדיקה/בדיקה.txt")
+        self.assertTrue(self.has("not part of the shipped library"))
+
+    def test_packaged_root_is_accepted(self):
+        self.set_path("OraytaToOtzaria/ספרים/אוצריא/בדיקה/בדיקה.txt")
+        self.assertEqual(self.errs(), [])
+
+    def test_shadowed_source_is_rejected(self):
+        self.set_path("OraytaToOtzaria/ספרים/אוצריא/בדיקה/בדיקה.txt")
+        errs = validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), shadow_check=lambda m: ["MoreBooks"]
+        )
+        self.assertTrue(any("נדרס" in e and "MoreBooks" in e for e in errs))
+
+    def test_shadow_check_failure_is_reported_not_crashed(self):
+        def boom(meta):
+            raise OSError("network down")
+        errs = validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), shadow_check=boom
+        )
+        self.assertTrue(any("לא ניתן לבדוק אם הקובץ נדרס" in e for e in errs))
+
+
+class CrossDataset(Base):
+    def make_copy(self, name, prefix=None, ids=None):
+        target = os.path.join(self.tmp, "set", name)
+        os.makedirs(target)
+        meta_src = os.path.join(self.d, NAME + ".מקור.json")
+        with open(meta_src, encoding="utf-8") as f:
+            meta = json.load(f)
+        if prefix:
+            meta["id_prefix"] = prefix
+        with open(os.path.join(target, name + ".מקור.json"), "w", encoding="utf-8") as f:
+            json.dump(meta, f, ensure_ascii=False)
+        rows = self.load()
+        for r, new_id in zip(rows, ids or [r["id"] for r in rows]):
+            r["id"] = new_id
+        with open(os.path.join(target, name + ".jsonl"), "w", encoding="utf-8") as f:
+            for r in rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        return target
+
+    def test_duplicate_ids_across_datasets_are_reported(self):
+        a = self.make_copy("א")
+        b = self.make_copy("ב", prefix="other", ids=["other-001", "other-002", "fx-001"])
+        errors = validate.cross_dataset_errors([a, b])
+        self.assertTrue(any("fx-001" in e for e in errors), errors)
+
+    def test_duplicate_prefix_is_reported(self):
+        a = self.make_copy("א")
+        b = self.make_copy("ב", ids=["zz-001", "zz-002", "zz-003"])
+        errors = validate.cross_dataset_errors([a, b])
+        self.assertTrue(any("id_prefix" in e for e in errors), errors)
+
+    def test_distinct_datasets_pass(self):
+        a = self.make_copy("א")
+        b = self.make_copy("ב", prefix="other", ids=["other-001", "other-002", "other-003"])
+        self.assertEqual(validate.cross_dataset_errors([a, b]), [])
 
 
 

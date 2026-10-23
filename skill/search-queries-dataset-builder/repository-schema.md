@@ -6,7 +6,7 @@ The checked-out repository, README, schema files, and validator are the source o
 
 ## Canonical source rule
 
-Every query, correct quote, near miss, reference, and line number must be based on a real `.txt` book committed in `https://github.com/Otzaria/otzaria-library`, under a path containing `ספרים/אוצריא/<category>/...`. This includes books imported into Otzaria from other libraries once they are present at that path. Never point at an arbitrary upstream library or invent references.
+Every query, correct quote, near miss, reference, and line number must be based on a real `.txt` book committed in `https://github.com/Otzaria/otzaria-library` under `<packaged root>/ספרים/אוצריא/<category>/...`. The packaged roots are `PACKAGED_ROOTS` in `tools/library.py` (the roots Otzaria's release merges into its library). `extraBooks/`, `docxToOtzaria/`, `DictaToOtzaria/לא ערוך/` and `ספרים/<not אוצריא>/` are not shipped and are rejected. A later root overrides an earlier one for the same relative path; the validator rejects a source that a later root overrides. Never point at an arbitrary upstream library or invent references.
 
 Source metadata records the precise repo-relative path, full 40-character commit SHA, and SHA-256 of the raw source file at that commit. The raw book itself is not copied into the query dataset repository.
 
@@ -26,7 +26,7 @@ datasets/<source_category>/<book_name>/
 
 `source_category` must equal the first folder under `ספרים/אוצריא/` in `origin_path`, and `book_name` must equal the filename stem of that `.txt` source. For example, a path beginning `MoreBooks/ספרים/אוצריא/תלמוד בבלי/...` has category `תלמוד בבלי`; a path beginning `MoreBooks/ספרים/אוצריא/שות/...` has category `שות`.
 
-`drafts/` allows `verified_by_human` to be empty. Promotion into `datasets/` requires a human verification value and a clean validator run. JSONL is canonical; CSV must be regenerated from it.
+`drafts/` allows `verified_by_human` to be empty. Promotion into `datasets/` requires a clean validator run and, in every record, a `verified_by_human` value that appears in the repository's `verifiers.txt`. JSONL is canonical; CSV must be regenerated from it. `id_prefix` and every `id` are unique across all datasets, drafts included.
 
 ## Record fields
 
@@ -36,7 +36,7 @@ Exactly 12 string fields in this order:
 
 - `type`: `conceptual` or `short`.
 - `split`: `train` or `test`.
-- `near_miss_same_section`: `כן` exactly when the two reference strings are equal, otherwise `לא`.
+- `near_miss_same_section`: `כן` exactly when both citations lie in the same section instance, otherwise `לא`. Sibling sections with the same title have equal refs but are different sections.
 - IDs follow `<id_prefix>-NNN` with at least three digits.
 - All values are strings; all fields must be non-empty except `verified_by_human` in drafts.
 
@@ -48,7 +48,7 @@ The metadata file `<book_name>.מקור.json` has exactly:
 - `source_category`
 - `id_prefix`
 - `origin_repo` (must be `https://github.com/Otzaria/otzaria-library`)
-- `origin_path` (repository-relative `.txt` path containing `ספרים/אוצריא/<category>/...`; it may have leading folders such as `MoreBooks/`)
+- `origin_path` (repository-relative `.txt` path `<packaged root>/ספרים/אוצריא/<category>/...`, e.g. `MoreBooks/ספרים/אוצריא/...`)
 - `origin_commit` (full 40-character SHA)
 - `origin_sha256` (64-character SHA-256 of the raw source bytes)
 - `note`
@@ -57,9 +57,9 @@ Never guess a path, commit, hash, line number, heading, or quotation.
 
 ## References, headings and lines
 
-Otzaria source files use physical lines as content units and heading lines such as `<h1>` to `<h6>`. The validator derives a human-readable heading path from the active hierarchy. Examples might be `הלכות ציצית > סימן א`, `שאלות ותשובות > סימן א`, or a Talmud book's actual heading `דף ב.`.
+Otzaria source files use physical lines as content units; the table of contents comes only from lines starting with `<h1>` to `<h6>` (Markdown `#` lines are body text). The validator derives a human-readable heading path from the active hierarchy; a heading that skips a level has no parent, as in Otzaria. Examples might be `הלכות ציצית > סימן א`, `שאלות ותשובות > סימן א`, or a Talmud book's actual heading `דף ב.`.
 
-The book's headings must be parsed from the original source before stripping HTML tags. Line numbers refer to the entire source file with original physical line breaks. The validator then normalizes text for quote matching; it verifies both that the quote occurs within the declared line range and that the heading path matches that range. A span crossing a heading boundary is rejected.
+The book's headings must be parsed from the original source before stripping HTML tags. Line numbers refer to the entire source file with original physical line breaks. The validator then normalizes text for quote matching; it verifies both that the quote occurs within the declared line range and that the heading path matches that range. A span crossing a heading boundary is rejected. A malformed heading (empty title, unterminated tag) makes the lines beneath it, up to the next `<h1>`/`<h2>`, uncertain: citing them is rejected with the malformed line named, while the rest of the book stays usable.
 
 ## Query-quality rules
 
