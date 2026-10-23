@@ -68,7 +68,7 @@ def main(argv=None) -> int:
         print(f"הטיוטה לא הועברה: לא ניתן לבדוק התנגשויות ({type(exc).__name__}: {exc})", file=sys.stderr)
         return 1
     if collisions:
-        print("הטיוטה לא הועברה: התנגשות מזהים מול מערכים אחרים:")
+        print("הטיוטה לא הועברה: בדיקת ההתנגשויות מול מערכים אחרים מצאה בעיות (התנגשות מזהים או קובץ שלא ניתן לקרוא):")
         for error in collisions:
             print(" -", error)
         return 1

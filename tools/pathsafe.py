@@ -41,7 +41,8 @@ def link_component(path, root=None) -> Path | None:
 
     With *root*, the root itself and everything below it are inspected, but not
     its ancestors, so a symlinked home directory or temp dir above the checkout
-    is not an error.
+    is not an error. A path outside *root* gets no such exemption: every
+    ancestor of it is inspected.
     """
     path = _absolute(path)
     if root is not None:
