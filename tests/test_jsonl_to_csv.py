@@ -51,6 +51,24 @@ class JsonlToCsvTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
                 jsonl_to_csv.load_records(source)
 
+    def write_one(self, root, row):
+        source = Path(root) / "book.jsonl"
+        source.write_text(json.dumps(row, ensure_ascii=False) + "\n", encoding="utf-8")
+        return source
+
+    def test_no_flag_with_identical_refs_is_accepted_for_sibling_sections(self):
+        row = record()
+        row["near_miss_same_section"] = "לא"  # same title, different sibling sections
+        with tempfile.TemporaryDirectory() as temp:
+            self.assertEqual(len(jsonl_to_csv.load_records(self.write_one(temp, row))), 1)
+
+    def test_yes_flag_with_different_refs_is_rejected(self):
+        row = record()
+        row["near_miss_ref"] = "פרק אחר"
+        with tempfile.TemporaryDirectory() as temp:
+            with self.assertRaisesRegex(ValueError, "same_section|section"):
+                jsonl_to_csv.load_records(self.write_one(temp, row))
+
     def test_overlapping_correct_and_near_miss_ranges_are_rejected(self):
         row = record()
         row["near_miss_line"] = "1-4"

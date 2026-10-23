@@ -235,7 +235,7 @@ class MappingTests(unittest.TestCase):
                 row, "correct", plain, plain, update_sources.line_map(plain, plain), "book", refs, ids,
             )
 
-    def test_sibling_sections_with_same_title_have_equal_refs_but_distinct_ids(self):
+    def test_repeated_sibling_headings_share_ref_but_not_section_id(self):
         lines = ["<h1>B</h1>", "<h3>הלכה א</h3>", "first", "<h3>הלכה א</h3>", "second"]
         refs, ids = source_refs.line_reference_data(lines)
         self.assertEqual(refs[2], refs[4])

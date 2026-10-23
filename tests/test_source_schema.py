@@ -65,6 +65,9 @@ class SourceSchemaPathTests(unittest.TestCase):
             "docxToOtzaria/ספרים/אוצריא/הלכה/ספר.txt",
             "OraytaToOtzaria/ספרים/לא ממויין/תלמוד בבלי/ספר.txt",
             "ספרים/אוצריא/הלכה/ספר.txt",
+            "MoreBooks/ספרים/אוצריא/הלכה//ספר.txt",
+            "MoreBooks/ספרים/אוצריא/הלכה/.txt",
+            "MoreBooks/ספרים/אוצריא/ספר.txt",
         ):
             self.assertNotRegex(path, self.pattern)
             with self.assertRaises(ValueError):

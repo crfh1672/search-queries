@@ -49,15 +49,16 @@ def link_component(path, root=None) -> Path | None:
         try:
             relative = path.relative_to(root)
         except ValueError:
-            return path if is_link(path) else None
-        current = root
-        if is_link(current):
-            return current
-        for part in relative.parts:
-            current = current / part
+            relative = None  # outside the root: no ancestor is exempt
+        if relative is not None:
+            current = root
             if is_link(current):
                 return current
-        return None
+            for part in relative.parts:
+                current = current / part
+                if is_link(current):
+                    return current
+            return None
     for component in (*reversed(path.parents), path):
         if is_link(component):
             return component

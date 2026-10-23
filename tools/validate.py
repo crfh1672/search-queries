@@ -427,8 +427,9 @@ def cross_dataset_errors(directories):
             meta = json.loads((directory / f"{name}.מקור.json").read_text(encoding="utf-8"),
                               object_pairs_hook=unique_json_object)
             prefix = meta.get("id_prefix") if isinstance(meta, dict) else None
-        except (OSError, ValueError):
-            prefix = None  # validate_dataset reports unreadable metadata
+        except (OSError, ValueError) as exc:
+            prefix = None
+            errors.append(f"{directory}: לא ניתן לקרוא מטא-דאטה לבדיקת התנגשויות ({exc})")
         if isinstance(prefix, str):
             if prefix in prefixes:
                 errors.append(f"{directory}: id_prefix {prefix!r} כבר בשימוש ב-{prefixes[prefix]}")
@@ -447,8 +448,9 @@ def cross_dataset_errors(directories):
                         errors.append(f"{directory}: ה-id {rid} כבר קיים ב-{ids[rid]}")
                     else:
                         ids[rid] = directory
-        except (OSError, ValueError):
-            continue  # validate_dataset reports unreadable JSONL
+        except (OSError, ValueError) as exc:
+            # Fail closed: an unreadable file could hide a colliding id.
+            errors.append(f"{directory}: לא ניתן לקרוא JSONL לבדיקת התנגשויות ({exc})")
     return errors
 
 
@@ -533,7 +535,7 @@ def main(argv):
         all_errs += e
     # Collisions are checked against every dataset in the repository, also when
     # only one path was given on the command line.
-    scope = {Path(value) for value in unique} | set(all_dataset_dirs(repo_root))
+    scope = {Path(os.path.abspath(value)) for value in unique} | set(all_dataset_dirs(repo_root))
     all_errs += cross_dataset_errors(scope)
     for error in all_errs[:60]:
         print(" -", error)

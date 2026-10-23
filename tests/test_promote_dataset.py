@@ -166,16 +166,16 @@ class PromotePathSafetyTests(unittest.TestCase):
         other.mkdir(parents=True)
         self.run_main(other)
 
-    def make_approved_dataset(self, category, name, prefix):
+    def make_approved_dataset(self, category, name, prefix, row_id=None):
         folder = self.root / "datasets" / category / name
         folder.mkdir(parents=True)
         meta = {"book_name": name, "source_category": category, "id_prefix": prefix}
         (folder / f"{name}.מקור.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-        (folder / f"{name}.jsonl").write_text(json.dumps({"id": f"{prefix}-001"}) + "\n", encoding="utf-8")
+        (folder / f"{name}.jsonl").write_text(json.dumps({"id": row_id or f"{prefix}-001"}) + "\n", encoding="utf-8")
 
     def test_id_collision_with_an_existing_dataset_blocks_promotion(self):
         draft = self.create_draft()  # id_prefix "book", id book-001
-        self.make_approved_dataset("מדרש", "אחר", "book")
+        self.make_approved_dataset("מדרש", "אחר", "other", row_id="book-001")
         result, stdout, _ = self.run_promotion(draft)
         self.assertEqual(result, 1)
         self.assertTrue(draft.exists())

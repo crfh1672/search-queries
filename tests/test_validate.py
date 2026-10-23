@@ -609,12 +609,28 @@ class CrossDatasetScope(CrossDataset):
 
     def test_symlinked_dataset_is_skipped_not_followed(self):
         real = self.make_copy("אמיתי")
-        link = Path(self.tmp) / "set" / "קישור"
+        # Same folder name as the real dataset, so a followed link would find
+        # real metadata/JSONL files and report duplicate ids.
+        (Path(self.tmp) / "links").mkdir()
+        link = Path(self.tmp) / "links" / "אמיתי"
         try:
             link.symlink_to(real, target_is_directory=True)
         except (OSError, NotImplementedError) as exc:
             self.skipTest(f"directory symlink is unavailable: {exc}")
         self.assertEqual(validate.cross_dataset_errors([Path(real), link]), [])
+
+    def test_unreadable_jsonl_fails_closed(self):
+        a = self.make_copy("א")
+        b = self.make_copy("ב", prefix="other", ids=["other-001", "other-002", "other-003"])
+        Path(b, "ב.jsonl").write_text("{broken\n", encoding="utf-8")
+        errors = validate.cross_dataset_errors([a, b])
+        self.assertTrue(any("JSONL" in e for e in errors), errors)
+
+    def test_unreadable_metadata_fails_closed(self):
+        a = self.make_copy("א")
+        Path(a, "א.מקור.json").write_text("not json", encoding="utf-8")
+        errors = validate.cross_dataset_errors([a])
+        self.assertTrue(any("מטא-דאטה" in e for e in errors), errors)
 
 
 if __name__ == "__main__":

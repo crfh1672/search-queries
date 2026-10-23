@@ -57,7 +57,7 @@ Never guess a path, commit, hash, line number, heading, or quotation.
 
 ## References, headings and lines
 
-Otzaria source files use physical lines as content units; the table of contents comes only from lines starting with `<h1>` to `<h6>` (Markdown `#` lines are body text). The validator derives a human-readable heading path from the active hierarchy; a heading that skips a level has no parent, as in Otzaria. Examples might be `הלכות ציצית > סימן א`, `שאלות ותשובות > סימן א`, or a Talmud book's actual heading `דף ב.`.
+Otzaria source files use physical lines as content units; the table of contents comes only from lines starting with `<h1>` to `<h6>` (leading whitespace allowed; Markdown `#` lines are body text). The validator derives a human-readable heading path from the active hierarchy; a heading that skips a level has no parent, as in Otzaria. Examples might be `הלכות ציצית > סימן א`, `שאלות ותשובות > סימן א`, or a Talmud book's actual heading `דף ב.`.
 
 The book's headings must be parsed from the original source before stripping HTML tags. Line numbers refer to the entire source file with original physical line breaks. The validator then normalizes text for quote matching; it verifies both that the quote occurs within the declared line range and that the heading path matches that range. A span crossing a heading boundary is rejected. A malformed heading (empty title, unterminated tag) makes the lines beneath it, up to the next `<h1>` or TOC-visible `<h2>`, uncertain: citing them is rejected with the malformed line named, while the rest of the book stays usable.
 

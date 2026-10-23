@@ -1,5 +1,5 @@
 """גישה לקובצי ספרים ב-Otzaria, עם pin לקומיט ול-hash ולנירמול אחיד."""
-import hashlib, json, os, re, stat, tempfile, urllib.error, urllib.parse, urllib.request
+import hashlib, json, os, re, stat, tempfile, time, urllib.error, urllib.parse, urllib.request
 from pathlib import Path, PurePosixPath
 
 import pathsafe
@@ -71,9 +71,9 @@ def schema_origin_path_pattern():
     # '-' must stay unescaped: ECMA-262 with the 'u' flag rejects '\-' outside a class.
     roots = "|".join(re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", root) for root in PACKAGED_ROOTS)
     return (
-        r"^(?!.*\\)(?!.*(?:^|/)\.{1,2}(?:/|$))"
+        r"^(?!.*\\)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))"
         r"(?!.*(?:^|/)ספרים/אוצריא/.*(?:^|/)ספרים/אוצריא/)"
-        rf"(?:{roots})/ספרים/אוצריא/[^/]+/.+\.txt$"
+        rf"(?:{roots})/ספרים/אוצריא/[^/]+/(?:[^/]+/)*[^/]+\.txt$"
     )
 
 
@@ -265,15 +265,34 @@ def get_pinned(slug, meta, offline=False):
 
 # --- shadowing -------------------------------------------------------------
 
+_RETRY_STATUS = {429, 500, 502, 503, 504}
+_ATTEMPTS = 4
+
+
+def _sleep(seconds):
+    time.sleep(seconds)
+
+
 def _exists_at(url, opener):
+    """HEAD request with a few bounded retries for rate limits and server errors.
+
+    404 means "not there". Any other persistent failure propagates, so an
+    unreachable answer is never mistaken for "not shadowed".
+    """
     request = urllib.request.Request(url, method="HEAD")
-    try:
-        with opener(request, timeout=60):
-            return True
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return False
-        raise
+    for attempt in range(_ATTEMPTS):
+        try:
+            with opener(request, timeout=60):
+                return True
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return False
+            if exc.code not in _RETRY_STATUS or attempt == _ATTEMPTS - 1:
+                raise
+        except urllib.error.URLError:
+            if attempt == _ATTEMPTS - 1:
+                raise
+        _sleep(2 ** attempt)
 
 
 def shadowing_roots(meta, offline=False, opener=None):

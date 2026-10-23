@@ -60,9 +60,13 @@ def main(argv=None) -> int:
             print(" -", error)
         return 1
 
-    collisions = validate.cross_dataset_errors(
-        {draft, *validate.all_dataset_dirs(root)}
-    )
+    try:
+        collisions = validate.cross_dataset_errors(
+            {draft, *validate.all_dataset_dirs(root)}
+        )
+    except OSError as exc:
+        print(f"הטיוטה לא הועברה: לא ניתן לבדוק התנגשויות ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return 1
     if collisions:
         print("הטיוטה לא הועברה: התנגשות מזהים מול מערכים אחרים:")
         for error in collisions:

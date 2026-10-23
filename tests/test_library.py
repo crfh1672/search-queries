@@ -156,8 +156,45 @@ class ShadowingTests(unittest.TestCase):
 
         def broken(request, timeout=0):
             raise urllib.error.HTTPError(request.full_url, 500, "boom", {}, None)
-        with self.assertRaises(urllib.error.HTTPError):
-            library.shadowing_roots(self.meta, opener=broken)
+        with patch.object(library, "_sleep", lambda s: None):
+            with self.assertRaises(urllib.error.HTTPError):
+                library.shadowing_roots(self.meta, opener=broken)
+
+    def test_transient_errors_are_retried_a_bounded_number_of_times(self):
+        import urllib.error
+        attempts = []
+
+        def flaky(request, timeout=0):
+            attempts.append(1)
+            if len(attempts) < 3:
+                raise urllib.error.HTTPError(request.full_url, 429, "slow down", {}, None)
+            raise urllib.error.HTTPError(request.full_url, 404, "nf", {}, None)
+        with patch.object(library, "_sleep", lambda s: None):
+            self.assertFalse(library._exists_at("https://example.invalid/x", flaky))
+        self.assertEqual(len(attempts), 3)
+
+        attempts.clear()
+
+        def always_down(request, timeout=0):
+            attempts.append(1)
+            raise urllib.error.HTTPError(request.full_url, 503, "down", {}, None)
+        with patch.object(library, "_sleep", lambda s: None):
+            with self.assertRaises(urllib.error.HTTPError):
+                library._exists_at("https://example.invalid/x", always_down)
+        self.assertEqual(len(attempts), library._ATTEMPTS)
+
+    def test_a_symlinked_cache_entry_is_not_read(self):
+        outside = Path(self.temp.name) / "outside.json"
+        outside.write_text('["KSK"]', encoding="utf-8")
+        cache = Path(library.CACHE_DIR)
+        cache.mkdir(parents=True)
+        name = f"shadow-{library._cache_identity(self.meta)}-{self.meta['origin_commit'][:10]}.json"
+        try:
+            (cache / name).symlink_to(outside)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink is unavailable: {exc}")
+        self.assertIsNone(library.shadowing_roots(self.meta, offline=True))
+        self.assertEqual(outside.read_text(encoding="utf-8"), '["KSK"]')
 
 
 if __name__ == "__main__":
