@@ -13,43 +13,21 @@ TOOLS_DIR = Path(__file__).resolve().parent
 REPO_ROOT = TOOLS_DIR.parent
 sys.path.insert(0, str(TOOLS_DIR))
 import library
+import pathsafe
 import source_refs
 import validate
 
 
 def path_has_link_component(path: Path) -> Path | None:
-    """Reject links within the repository path, but ignore OS-level ancestors."""
-    path = Path(os.path.abspath(path))
-    root = Path(os.path.abspath(REPO_ROOT))
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        # Explicit external paths are checked after resolving them in
-        # resolve_dataset(); this helper is for paths inside the checkout.
-        return None
-    current = root
-    if library.is_path_link(current):
-        return current
-    for component in relative.parts:
-        current = current / component
-        if library.is_path_link(current):
-            return current
-    return None
+    """Reject links inside the checkout, but ignore OS-level ancestors above it."""
+    return pathsafe.link_component(path, REPO_ROOT)
 
 
 def reject_link_tree(root: Path) -> None:
     if path_has_link_component(root) is not None:
         raise SystemExit(f"נתיב המערך מכיל symlink או junction: {root}")
-    for current, dirs, files in os.walk(root, followlinks=False):
-        base = Path(current)
-        for name in list(dirs):
-            candidate = base / name
-            if library.is_path_link(candidate):
-                raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
-        for name in files:
-            candidate = base / name
-            if library.is_path_link(candidate):
-                raise SystemExit(f"המערך מכיל symlink או junction: {candidate}")
+    for link in pathsafe.links_in_tree(root):
+        raise SystemExit(f"המערך מכיל symlink או junction: {link}")
 
 
 def resolve_dataset(value: str) -> Path:
@@ -76,21 +54,21 @@ def resolve_dataset(value: str) -> Path:
     if candidate.is_dir() and (candidate / f"{candidate.name}.מקור.json").is_file():
         reject_link_tree(candidate)
         meta_path = candidate / f"{candidate.name}.מקור.json"
-        if library.is_path_link(meta_path) or not meta_path.is_file():
+        if pathsafe.is_link(meta_path) or not meta_path.is_file():
             raise SystemExit(f"קובץ המקור חסר או אינו קובץ רגיל: {meta_path}")
         return candidate.resolve(strict=True)
 
     matches = []
     for root_name in ("datasets", "drafts"):
         root = REPO_ROOT / root_name
-        if library.is_path_link(root):
+        if pathsafe.is_link(root):
             raise SystemExit(f"תיקיית {root_name} אינה יכולה להיות symlink או junction")
         if root.exists():
             for current, dirs, files in os.walk(root, followlinks=False):
                 base = Path(current)
-                dirs[:] = [name for name in dirs if not library.is_path_link(base / name)]
+                dirs[:] = [name for name in dirs if not pathsafe.is_link(base / name)]
                 for name in files:
-                    if not name.endswith(".מקור.json") or library.is_path_link(base / name):
+                    if not name.endswith(".מקור.json") or pathsafe.is_link(base / name):
                         continue
                     if base.name == value:
                         matches.append(base)

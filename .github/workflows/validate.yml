@@ -2,7 +2,13 @@ name: validate
 on: [push, pull_request]
 jobs:
   validate:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      PYTHONUTF8: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -11,4 +17,13 @@ jobs:
       - name: בדיקת מערכי השאילתות
         run: python tools/validate.py
       - name: בדיקות היחידה של הבודק
-        run: python -m unittest discover -s tests -v
+        shell: bash
+        run: |
+          set +e
+          python -m unittest discover -s tests -v > unittest.log 2>&1
+          code=$?
+          cat unittest.log
+          if [ "$code" -ne 0 ]; then
+            echo "::error title=unit tests failed::$(grep -E '^(ERROR|FAIL):' unittest.log | tr -d '\r' | head -30 | sed ':a;N;$!ba;s/\n/%0A/g')"
+          fi
+          exit "$code"

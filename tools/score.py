@@ -14,41 +14,31 @@
 import argparse, csv, glob, json, os, collections, sys
 from pathlib import Path
 
+import pathsafe
 import validate
 
 
 def has_link_below_root(path, root):
     """Check the data root and its descendants, not unrelated OS ancestors."""
-    path = Path(path)
-    root = Path(root)
-    try:
-        relative = path.relative_to(root)
-    except ValueError:
-        return validate.is_path_link(path)
-    current = root
-    for component in relative.parts[:-1]:
-        current = current / component
-        if validate.is_path_link(current):
-            return True
-    return validate.is_path_link(path)
+    return pathsafe.link_component(path, root) is not None
 
 
 def load_data(data_dir="datasets"):
     rows = {}
     root = os.path.abspath(data_dir)
-    if validate.is_path_link(root):
-        print(f"Warning: refusing to read through a symlink or junction: {root!r}", file=sys.stderr)
+    if pathsafe.is_link(root):
+        print(f"Warning: refusing to read through a symlink or junction: {root}", file=sys.stderr)
         return rows
     # Only load the canonical file at datasets/<category>/<book>/<book>.jsonl.
     # Ignore nested examples, backups, and any alternate JSONL files.
     pattern = os.path.join(root, "*", "*", "*.jsonl")
     for p in sorted(glob.glob(pattern)):
         if has_link_below_root(p, Path(root)):
-            print(f"Warning: ignoring JSONL path containing a symlink/junction: {p!r}", file=sys.stderr)
+            print(f"Warning: ignoring JSONL path containing a symlink/junction: {p}", file=sys.stderr)
             continue
         if os.path.basename(p) != os.path.basename(os.path.dirname(p)) + ".jsonl":
             print(
-                f"Warning: ignoring non-canonical JSONL file {p!r}; "
+                f"Warning: ignoring non-canonical JSONL file {p}; "
                 "expected the file name to match its book directory",
                 file=sys.stderr,
             )
@@ -90,8 +80,9 @@ def load_data(data_dir="datasets"):
                             raise ValueError(f"{p}:{line_number}: invalid citation range: {exc}") from exc
                         if not (correct_end < near_start or near_end < correct_start):
                             raise ValueError(f"{p}:{line_number}: citation ranges overlap")
-                        same_ref = r["correct_ref"] == r["near_miss_ref"]
-                        if (r["near_miss_same_section"] == "כן") != same_ref:
+                        # score.py has no source text, so it can only catch the
+                        # impossible case; validate.py checks the exact section IDs.
+                        if r["near_miss_same_section"] == "כן" and r["correct_ref"] != r["near_miss_ref"]:
                             raise ValueError(f"{p}:{line_number}: near-miss section flag disagrees with references")
                         if r["id"] in seen_in_file or r["id"] in rows:
                             raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")
@@ -100,7 +91,7 @@ def load_data(data_dir="datasets"):
             # Add a file only after every row in it passed basic checks.
             rows.update((r["id"], r) for r in file_rows)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(f"canonical dataset file {p!r} is invalid: {exc}") from exc
+            raise ValueError(f"canonical dataset file {p} is invalid: {exc}") from exc
     return rows
 
 

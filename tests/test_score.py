@@ -252,6 +252,25 @@ class ScoreInputTests(unittest.TestCase):
             self.assertIn("backup.jsonl", stderr.getvalue())
             self.assertIn("Warning", stderr.getvalue())
 
+    def test_sibling_sections_with_same_title_are_accepted_when_flagged_no(self):
+        with tempfile.TemporaryDirectory() as temp:
+            book = Path(temp) / "הלכה" / "ספר"
+            book.mkdir(parents=True)
+            row = query_record("book-001", "q")
+            row["near_miss_same_section"] = "לא"  # identical refs, different sibling sections
+            (book / "ספר.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            self.assertEqual(set(score.load_data(temp)), {"book-001"})
+
+    def test_yes_flag_with_different_refs_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temp:
+            book = Path(temp) / "הלכה" / "ספר"
+            book.mkdir(parents=True)
+            row = query_record("book-001", "q")
+            row["near_miss_ref"] = "פרק אחר"
+            (book / "ספר.jsonl").write_text(json.dumps(row) + "\n", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "section flag disagrees"):
+                score.load_data(temp)
+
 
 if __name__ == "__main__":
     unittest.main()
