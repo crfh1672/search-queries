@@ -27,18 +27,18 @@ def load_data(data_dir="datasets"):
     rows = {}
     root = os.path.abspath(data_dir)
     if pathsafe.is_link(root):
-        print(f"Warning: refusing to read through a symlink or junction: {root!r}", file=sys.stderr)
+        print(f"Warning: refusing to read through a symlink or junction: {root}", file=sys.stderr)
         return rows
     # Only load the canonical file at datasets/<category>/<book>/<book>.jsonl.
     # Ignore nested examples, backups, and any alternate JSONL files.
     pattern = os.path.join(root, "*", "*", "*.jsonl")
     for p in sorted(glob.glob(pattern)):
         if has_link_below_root(p, Path(root)):
-            print(f"Warning: ignoring JSONL path containing a symlink/junction: {p!r}", file=sys.stderr)
+            print(f"Warning: ignoring JSONL path containing a symlink/junction: {p}", file=sys.stderr)
             continue
         if os.path.basename(p) != os.path.basename(os.path.dirname(p)) + ".jsonl":
             print(
-                f"Warning: ignoring non-canonical JSONL file {p!r}; "
+                f"Warning: ignoring non-canonical JSONL file {p}; "
                 "expected the file name to match its book directory",
                 file=sys.stderr,
             )
@@ -91,7 +91,7 @@ def load_data(data_dir="datasets"):
             # Add a file only after every row in it passed basic checks.
             rows.update((r["id"], r) for r in file_rows)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-            raise ValueError(f"canonical dataset file {p!r} is invalid: {exc}") from exc
+            raise ValueError(f"canonical dataset file {p} is invalid: {exc}") from exc
     return rows
 
 
