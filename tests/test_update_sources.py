@@ -235,7 +235,7 @@ class MappingTests(unittest.TestCase):
                 row, "correct", plain, plain, update_sources.line_map(plain, plain), "book", refs, ids,
             )
 
-    def test_section_flag_is_recomputed_from_section_ids_not_ref_strings(self):
+    def test_sibling_sections_with_same_title_have_equal_refs_but_distinct_ids(self):
         lines = ["<h1>B</h1>", "<h3>הלכה א</h3>", "first", "<h3>הלכה א</h3>", "second"]
         refs, ids = source_refs.line_reference_data(lines)
         self.assertEqual(refs[2], refs[4])

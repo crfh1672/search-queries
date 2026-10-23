@@ -60,6 +60,15 @@ def main(argv=None) -> int:
             print(" -", error)
         return 1
 
+    collisions = validate.cross_dataset_errors(
+        {draft, *validate.all_dataset_dirs(root)}
+    )
+    if collisions:
+        print("הטיוטה לא הועברה: התנגשות מזהים מול מערכים אחרים:")
+        for error in collisions:
+            print(" -", error)
+        return 1
+
     try:
         meta = json.loads((draft / f"{book}.מקור.json").read_text(encoding="utf-8"))
         for key, folder in (("source_category", category), ("book_name", book)):
@@ -73,11 +82,18 @@ def main(argv=None) -> int:
     if pathsafe.link_component(parent, root) is not None:
         print(f"הקידום בוטל: {parent} מכיל קישור סמלי", file=sys.stderr)
         return 1
-    parent.mkdir(parents=True, exist_ok=True)
-    if pathsafe.link_component(parent, root) is not None:
-        print(f"הקידום בוטל: {parent} מכיל קישור סמלי", file=sys.stderr)
+    try:
+        parent.mkdir(parents=True, exist_ok=True)
+        if pathsafe.link_component(parent, root) is not None:
+            print(f"הקידום בוטל: {parent} מכיל קישור סמלי", file=sys.stderr)
+            return 1
+        if destination.exists():
+            print(f"לא ניתן להעביר: היעד כבר קיים: {destination}", file=sys.stderr)
+            return 1
+        os.rename(draft, destination)
+    except OSError as exc:
+        print(f"הקידום בוטל: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 1
-    os.rename(draft, destination)
     print(f"המערך אומת והועבר אל: {destination.relative_to(root)}")
     return 0
 

@@ -56,6 +56,25 @@ class PathSafeTests(unittest.TestCase):
         found = pathsafe.links_in_tree(self.root)
         self.assertEqual([p.name for p in found], ["קישור"])
 
+    def test_link_before_dot_dot_is_still_detected(self):
+        outside = Path(self.tmp.name) / "outside"
+        (outside / "inner").mkdir(parents=True)
+        link = self.root / "datasets" / "קישור"
+        self.link(outside, link)
+        # The OS resolves link/.. to the link target's parent, not to datasets/.
+        self.assertEqual(pathsafe.link_component(link / ".." / "x"), link)
+
+    def test_unreadable_subtree_fails_closed(self):
+        from unittest.mock import patch
+
+        def failing_walk(top, topdown=True, onerror=None, followlinks=False):
+            onerror(PermissionError("denied"))
+            return iter(())
+
+        with patch.object(pathsafe.os, "walk", failing_walk):
+            with self.assertRaises(PermissionError):
+                pathsafe.links_in_tree(self.root)
+
 
 if __name__ == "__main__":
     unittest.main()

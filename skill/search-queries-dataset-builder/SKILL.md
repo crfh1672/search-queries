@@ -40,7 +40,7 @@ Otzaria files use one physical line per unit and build their table of contents o
 - A heading that skips a level (h2 then h4) has no parent, exactly as in Otzaria's TOC.
 - `data-toc="none"` headings are not part of the path.
 - A multi-line citation must stay inside one section; two sibling sections with the same title are different sections.
-- A malformed heading (empty title, unterminated tag) makes the lines under it, up to the next `<h1>`/`<h2>`, *uncertain*. Do not cite them; the validator rejects such citations and names the malformed line. Other lines of the book are unaffected.
+- A malformed heading (empty title, unterminated tag) makes the lines under it, up to the next `<h1>` or the next `<h2>` that counts in the TOC (not `data-toc="none"`), *uncertain*. Do not cite them; the validator rejects such citations and names the malformed line. Other lines of the book are unaffected.
 
 Line fields are absolute 1-based physical line numbers or ranges in the full source file at the pinned commit, never numbers from a snippet.
 
@@ -90,7 +90,7 @@ python tools/promote_dataset.py "drafts/<source_category>/<book_name>"
 
 Promotion is refused unless validation passes as an approved dataset (including `verifiers.txt`) and the target does not exist. Never keep divergent copies in `drafts/` and `datasets/`.
 
-Offline validation works only if the pinned source (and its shadow check) is already cached.
+Offline validation works only if the pinned source is already cached. Without a cached shadow answer the shadowing check is skipped for drafts, but an approved dataset (and promotion) fails until the check has run once online.
 
 ## Completion report
 

@@ -11,13 +11,29 @@ import os
 from pathlib import Path
 
 
+_REPARSE_POINT = 0x400  # FILE_ATTRIBUTE_REPARSE_POINT
+
+
+def _absolute(path) -> Path:
+    """Absolute path that keeps '..' parts, so a link before '..' is still seen."""
+    path = Path(path)
+    return path if path.is_absolute() else Path.cwd() / path
+
+
 def is_link(path) -> bool:
     """True for a symlink or, on Windows, a directory junction."""
     path = Path(path)
     if path.is_symlink():
         return True
     is_junction = getattr(path, "is_junction", None)
-    return bool(is_junction and is_junction())
+    if is_junction is not None:
+        return bool(is_junction())
+    # Python < 3.12: on Windows a junction is a reparse point.
+    try:
+        attributes = os.lstat(path).st_file_attributes
+    except (AttributeError, OSError):
+        return False
+    return bool(attributes & _REPARSE_POINT)
 
 
 def link_component(path, root=None) -> Path | None:
@@ -27,9 +43,9 @@ def link_component(path, root=None) -> Path | None:
     its ancestors, so a symlinked home directory or temp dir above the checkout
     is not an error.
     """
-    path = Path(os.path.abspath(path))
+    path = _absolute(path)
     if root is not None:
-        root = Path(os.path.abspath(root))
+        root = _absolute(root)
         try:
             relative = path.relative_to(root)
         except ValueError:
@@ -56,7 +72,11 @@ def links_in_tree(root) -> list[Path]:
     if not root.is_dir():
         return []
     found: list[Path] = []
-    for current, dirs, files in os.walk(root, followlinks=False):
+
+    def unreadable(error):  # an unreadable subtree could hide a link: fail closed
+        raise error
+
+    for current, dirs, files in os.walk(root, followlinks=False, onerror=unreadable):
         base = Path(current)
         for name in list(dirs):
             if is_link(base / name):

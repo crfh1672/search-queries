@@ -76,6 +76,10 @@ class SourceSchemaPathTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             library.source_category_from_path(path)
 
+    def test_pattern_has_no_escaped_hyphen_that_ecma_u_flag_rejects(self):
+        self.assertNotIn("\\-", self.schema["properties"]["origin_path"]["pattern"])
+        self.assertRegex("Ben-YehudaToOtzaria/ספרים/אוצריא/הלכה/ספר.txt", self.pattern)
+
 
 if __name__ == "__main__":
     unittest.main()

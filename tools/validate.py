@@ -194,7 +194,12 @@ def validate_dataset(d, loader=None, offline=False, require_verified=None,
             err(f"לא ניתן לבדוק אם הקובץ נדרס על ידי שורש מאוחר בספרייה ({type(exc).__name__}: {exc}); "
                 "אפשר להריץ עם --offline אם התשובה כבר במטמון")
             return errs
-        if shadowed:
+        if shadowed is None:
+            if require_verified:
+                err("לא ניתן לאמת offline שהקובץ הנעוץ אינו נדרס על ידי שורש מאוחר בספרייה. "
+                    "יש להריץ פעם אחת עם רשת כדי לשמור את התשובה במטמון")
+                return errs
+        elif shadowed:
             err(f"הקובץ הנעוץ נדרס בספרייה המשוחררת על ידי עותק באותו נתיב יחסי תחת: {', '.join(shadowed)}. "
                 "המשתמש רואה את העותק האחר, לכן יש להצמיד אותו במקום")
             return errs
@@ -416,6 +421,8 @@ def cross_dataset_errors(directories):
     prefixes, ids, errors = {}, {}, []
     for directory in sorted({Path(d) for d in directories}):
         name = directory.name
+        if pathsafe.link_component(directory) is not None or pathsafe.links_in_tree(directory):
+            continue  # validate_dataset reports links
         try:
             meta = json.loads((directory / f"{name}.מקור.json").read_text(encoding="utf-8"),
                               object_pairs_hook=unique_json_object)
@@ -443,6 +450,17 @@ def cross_dataset_errors(directories):
         except (OSError, ValueError):
             continue  # validate_dataset reports unreadable JSONL
     return errors
+
+
+def all_dataset_dirs(repo_root=None):
+    """Every dataset folder under datasets/ and drafts/ (links are never followed)."""
+    repo_root = Path(repo_root or Path(TOOLS_DIR).parent)
+    found = []
+    for name in ("datasets", "drafts"):
+        root = repo_root / name
+        if root.is_dir() and not is_path_link(root):
+            found.extend(dataset_dirs(root))
+    return found
 
 
 def discover_target(path):
@@ -513,7 +531,10 @@ def main(argv):
                 all_errs.append(f"{jp}: לא ניתן לספור שורות ({exc})")
         print(f"{'✗' if e else '✓'} {target}  ({len(e)} בעיות)")
         all_errs += e
-    all_errs += cross_dataset_errors(Path(value) for value in unique)
+    # Collisions are checked against every dataset in the repository, also when
+    # only one path was given on the command line.
+    scope = {Path(value) for value in unique} | set(all_dataset_dirs(repo_root))
+    all_errs += cross_dataset_errors(scope)
     for error in all_errs[:60]:
         print(" -", error)
     if len(all_errs) > 60:

@@ -68,7 +68,8 @@ def repo_slug(value):
 
 def schema_origin_path_pattern():
     """The regex that schema/source.schema.json must carry for origin_path."""
-    roots = "|".join(re.escape(root) for root in PACKAGED_ROOTS)
+    # '-' must stay unescaped: ECMA-262 with the 'u' flag rejects '\-' outside a class.
+    roots = "|".join(re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", root) for root in PACKAGED_ROOTS)
     return (
         r"^(?!.*\\)(?!.*(?:^|/)\.{1,2}(?:/|$))"
         r"(?!.*(?:^|/)ספרים/אוצריא/.*(?:^|/)ספרים/אוצריא/)"
@@ -216,6 +217,8 @@ def _write_cache_atomic(name, data):
         try:
             with os.fdopen(fd, "wb") as handle:
                 handle.write(data)
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(temporary, Path(cache_dir) / name)
         finally:
             try:

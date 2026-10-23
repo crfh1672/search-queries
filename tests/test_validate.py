@@ -585,6 +585,37 @@ class CrossDataset(Base):
         self.assertEqual(validate.cross_dataset_errors([a, b]), [])
 
 
+class UnknownShadowResult(Base):
+    def run_check(self, require_verified):
+        return validate.validate_dataset(
+            self.d, loader=lambda d, m: (self.lib, None), shadow_check=lambda m: None,
+            require_verified=require_verified, verifiers=set(),
+        )
+
+    def test_unknown_result_blocks_an_approved_dataset(self):
+        self.assertTrue(any("offline" in e and "נדרס" in e for e in self.run_check(True)))
+
+    def test_unknown_result_is_tolerated_for_a_draft(self):
+        self.assertFalse(any("נדרס" in e for e in self.run_check(False)))
+
+
+class CrossDatasetScope(CrossDataset):
+    def test_all_dataset_dirs_finds_drafts_and_datasets(self):
+        root = Path(self.tmp) / "repo"
+        for kind in ("datasets", "drafts"):
+            (root / kind / "הלכה" / "ספר").mkdir(parents=True)
+        found = {p.relative_to(root).parts[0] for p in validate.all_dataset_dirs(root)}
+        self.assertEqual(found, {"datasets", "drafts"})
+
+    def test_symlinked_dataset_is_skipped_not_followed(self):
+        real = self.make_copy("אמיתי")
+        link = Path(self.tmp) / "set" / "קישור"
+        try:
+            link.symlink_to(real, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        self.assertEqual(validate.cross_dataset_errors([Path(real), link]), [])
+
 
 if __name__ == "__main__":
     unittest.main()
