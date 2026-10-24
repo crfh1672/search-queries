@@ -88,6 +88,8 @@ def load_data(data_dir="datasets"):
                             raise ValueError(f"duplicate query ID {r['id']!r} across datasets or within file")
                         seen_in_file.add(r["id"])
                         file_rows.append(r)
+            if not file_rows:
+                raise ValueError(f"{p}: the dataset file has no records")
             # Add a file only after every row in it passed basic checks.
             rows.update((r["id"], r) for r in file_rows)
         except (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
@@ -134,6 +136,9 @@ def main():
         ap.error("קובץ התוצאות ריק או מכיל כותרת בלבד; אין מה למדוד")
     if not data:
         ap.error("אין מערכי נתונים קנוניים להשוואת קובץ התוצאות")
+    duplicated = sorted({field for field in fieldnames if fieldnames.count(field) > 1})
+    if duplicated:
+        ap.error(f"קובץ התוצאות מכיל עמודות כפולות: {duplicated}")
     missing_columns = [field for field in ("id", "type", "query") if field not in fieldnames]
     if missing_columns:
         ap.error(f"קובץ התוצאות חסר עמודות נדרשות: {missing_columns}")

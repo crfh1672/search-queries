@@ -47,24 +47,22 @@ class ScoreInputTests(unittest.TestCase):
             loaded = score.load_data(data_root)
             self.assertEqual(set(loaded), {"book-001"})
 
-    def run_score(self, results, data_root):
+    def run_score(self, results, data_root, expected):
         with patch.object(
             sys, "argv", ["score.py", str(results), "--data", str(data_root)]
         ):
-            with contextlib.redirect_stderr(io.StringIO()):
+            with contextlib.redirect_stderr(io.StringIO()) as err:
                 with self.assertRaises(SystemExit) as cm:
                     score.main()
         self.assertEqual(cm.exception.code, 2)
+        self.assertIn(expected, err.getvalue())
 
     def test_score_rejects_results_without_rows(self):
         with tempfile.TemporaryDirectory() as temp:
             results = Path(temp) / "results.csv"
             results.write_text("id,type,query,smart_rank,lexical_rank\n", encoding="utf-8")
-            with patch.object(sys, "argv", ["score.py", str(results)]):
-                with contextlib.redirect_stderr(io.StringIO()):
-                    with self.assertRaises(SystemExit) as cm:
-                        score.main()
-            self.assertEqual(cm.exception.code, 2)
+            data_root = self.write_data(temp)
+            self.run_score(results, data_root, "ריק או מכיל כותרת בלבד")
 
     def test_score_rejects_zero_rank_instead_of_dividing_by_zero(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -74,7 +72,7 @@ class ScoreInputTests(unittest.TestCase):
                 "id,type,query,smart_rank,lexical_rank\nbook-001,short,q,0,1\n",
                 encoding="utf-8",
             )
-            self.run_score(results, data_root)
+            self.run_score(results, data_root, "rank must be positive")
 
     def test_score_rejects_unknown_result_ids(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -84,7 +82,7 @@ class ScoreInputTests(unittest.TestCase):
                 "id,type,query,smart_rank\nother-001,short,q,1\n",
                 encoding="utf-8",
             )
-            self.run_score(results, data_root)
+            self.run_score(results, data_root, "ID לא מוכר")
 
     def test_score_rejects_duplicate_result_ids(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -94,7 +92,7 @@ class ScoreInputTests(unittest.TestCase):
                 "id,type,query,smart_rank\nbook-001,short,q,1\nbook-001,short,q,2\n",
                 encoding="utf-8",
             )
-            self.run_score(results, data_root)
+            self.run_score(results, data_root, "ID כפול")
 
     def test_score_rejects_edited_query_or_type(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -104,7 +102,7 @@ class ScoreInputTests(unittest.TestCase):
                 "id,type,query,smart_rank\nbook-001,conceptual,changed,1\n",
                 encoding="utf-8",
             )
-            self.run_score(results, data_root)
+            self.run_score(results, data_root, "אינו תואם למערך הקנוני")
 
     def test_score_rejects_missing_canonical_ids(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -120,7 +118,22 @@ class ScoreInputTests(unittest.TestCase):
                 "id,type,query,smart_rank\nbook-001,short,q,1\n",
                 encoding="utf-8",
             )
-            self.run_score(results, data_root)
+            self.run_score(results, data_root, "חסרים בו מזהי שאילתות")
+
+    def test_score_rejects_duplicate_result_columns(self):
+        with tempfile.TemporaryDirectory() as temp:
+            data_root = self.write_data(temp)
+            results = Path(temp) / "results.csv"
+            results.write_text("id,type,query,smart_rank,smart_rank\nbook-001,short,q,1,2\n", encoding="utf-8")
+            self.run_score(results, data_root, "עמודות כפולות")
+
+    def test_loader_rejects_an_empty_dataset_file(self):
+        with tempfile.TemporaryDirectory() as temp:
+            book = Path(temp) / "הלכה" / "ספר"
+            book.mkdir(parents=True)
+            (book / "ספר.jsonl").write_text("", encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "no records"):
+                score.load_data(temp)
 
     def test_loader_fails_when_a_canonical_file_has_a_later_invalid_row(self):
         with tempfile.TemporaryDirectory() as temp:

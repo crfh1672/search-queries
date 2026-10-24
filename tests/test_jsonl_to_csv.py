@@ -41,7 +41,9 @@ class JsonlToCsvTests(unittest.TestCase):
 
             self.assertEqual(result, 0)
             with destination.open(encoding="utf-8-sig", newline="") as handle:
-                rows = list(csv.DictReader(handle))
+                reader = csv.DictReader(handle)
+                self.assertEqual(reader.fieldnames, list(record()))
+                rows = list(reader)
             self.assertEqual(rows, [record()])
 
     def test_duplicate_json_keys_are_rejected(self):

@@ -490,7 +490,12 @@ def main(argv):
             if symlink is not None:
                 scan_errors.append(f"{symlink}: paths containing symlinks are not validated")
                 continue
-            found = discover_target(supplied)
+            links = symlink_entries(supplied) if supplied.is_dir() else []
+            scan_errors.extend(f"{link}: symlinks are not allowed in a validated tree" for link in links)
+            found = [
+                p for p in discover_target(supplied)
+                if not any(p == link or p in link.parents for link in links)
+            ]
             targets.extend((p, None) for p in found)
             if not found:
                 targets.append((supplied, None))

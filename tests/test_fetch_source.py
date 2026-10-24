@@ -11,6 +11,24 @@ sys.path.insert(0, os.path.abspath(TOOLS))
 import fetch_source
 
 
+class MetadataBelongsToFolderTests(unittest.TestCase):
+    def test_metadata_for_another_book_is_refused(self):
+        with tempfile.TemporaryDirectory() as temp:
+            folder = Path(temp) / "ספר"
+            folder.mkdir()
+            meta = {
+                "book_name": "אחר", "source_category": "הלכה", "id_prefix": "book",
+                "origin_repo": fetch_source.library.CANONICAL_REPO_URL,
+                "origin_path": "MoreBooks/ספרים/אוצריא/הלכה/אחר.txt",
+                "origin_commit": "a" * 40, "origin_sha256": "b" * 64, "note": "",
+            }
+            (folder / "ספר.מקור.json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
+            with patch.object(fetch_source, "resolve_dataset", return_value=folder):
+                with patch.object(sys, "argv", ["fetch_source.py", str(folder)]):
+                    with self.assertRaisesRegex(SystemExit, "book_name"):
+                        fetch_source.main()
+
+
 class DatasetPathSafetyTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
