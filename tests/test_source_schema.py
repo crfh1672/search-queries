@@ -42,6 +42,12 @@ class SourceSchemaPathTests(unittest.TestCase):
             self.pattern,
         )
 
+    def test_rejects_immediately_repeated_library_dir(self):
+        path = "MoreBooks/ספרים/אוצריא/ספרים/אוצריא/ספר.txt"
+        self.assertNotRegex(path, self.pattern)
+        with self.assertRaises(ValueError):
+            library.source_category_from_path(path)
+
     def test_rejects_missing_category_folder(self):
         self.assertNotRegex(
             "ספרים/אוצריא/ספר.txt",

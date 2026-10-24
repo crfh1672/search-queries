@@ -53,6 +53,9 @@ class PathSafeTests(unittest.TestCase):
         outside = self.base / "outside"
         outside.mkdir()
         (outside / "inner.txt").write_text("x")
+        elsewhere = self.base / "elsewhere"
+        elsewhere.mkdir()
+        self.link(elsewhere, outside / "nested")  # must not be reported: not traversed
         self.link(outside, self.root / "datasets" / "קישור")
         found = pathsafe.links_in_tree(self.root)
         self.assertEqual([p.name for p in found], ["קישור"])
@@ -76,6 +79,28 @@ class PathSafeTests(unittest.TestCase):
         self.link(outside, alias)
         self.assertEqual(pathsafe.link_component(alias / "x", self.root), alias)
         self.assertIsNone(pathsafe.link_component(outside / "x", self.root))
+
+    def test_path_that_escapes_the_root_with_dot_dot_gets_no_exemption(self):
+        outside = self.base / "outside"
+        outside.mkdir()
+        alias = self.base / "alias"
+        self.link(outside, alias)
+        escaped = self.root / ".." / "alias" / "x"
+        self.assertEqual(pathsafe.link_component(escaped, self.root), self.root / ".." / "alias")
+
+    @unittest.skipUnless(os.name == "nt", "directory junctions exist only on Windows")
+    def test_directory_junction_is_a_link(self):
+        import _winapi
+        target = self.base / "junction-target"
+        target.mkdir()
+        junction = self.root / "datasets" / "צומת"
+        try:
+            _winapi.CreateJunction(str(target), str(junction))
+        except OSError as exc:
+            self.skipTest(f"junction creation is unavailable: {exc}")
+        self.assertTrue(pathsafe.is_link(junction))
+        self.assertEqual(pathsafe.link_component(junction / "x", self.root), junction)
+        self.assertEqual(pathsafe.links_in_tree(self.root), [junction])
 
     def test_link_before_dot_dot_is_still_detected(self):
         outside = self.base / "outside"
