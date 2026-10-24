@@ -37,10 +37,10 @@ Otzaria files use one physical line per unit and build their table of contents o
 
 - `<h1>` is the book title; lines under it with no deeper heading cite `פתיחת הספר`.
 - `correct_ref`/`near_miss_ref` are the heading path of the cited line, e.g. `הלכות ציצית > סימן א`, or `דף ב.` when the file's heading is that. A heading's text is the visible line text.
-- A heading that skips a level below an h2 or deeper heading (h2 then h4), and a heading with leading whitespace, are *uncertain*: Otzaria's format document and its two parsers disagree about them, so the validator does not guess and rejects citations beneath them.
+- A heading that skips a level (h2 then h4) hangs under the nearest shallower heading, as in Otzaria; a heading with leading whitespace is an ordinary heading. Lines starting with `#` are body text.
 - `data-toc="none"` headings are not part of the path.
 - A multi-line citation must stay inside one section; two sibling sections with the same title are different sections.
-- A malformed heading (empty title, unterminated tag, indented heading) makes the lines under it, up to the next `<h1>` or the next `<h2>` that counts in the TOC (not `data-toc="none"`), *uncertain*. Do not cite them; the validator rejects such citations and names the malformed line. Other lines of the book are unaffected.
+- A malformed heading (empty title, unterminated tag) makes the lines under it, up to the next `<h1>` or the next `<h2>` that counts in the TOC (not `data-toc="none"`), *uncertain*. Do not cite them; the validator rejects such citations and names the malformed line. Other lines of the book are unaffected.
 
 Line fields are absolute 1-based physical line numbers or ranges in the full source file at the pinned commit, never numbers from a snippet.
 
