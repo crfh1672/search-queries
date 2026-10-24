@@ -1,0 +1,9 @@
+{
+  "masechet": "מועד קטן",
+  "id_prefix": "moedkatan",
+  "origin_repo": "https://github.com/Otzaria/otzaria-library",
+  "origin_path": "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר מועד/מועד קטן.txt",
+  "origin_commit": "ee0264f9e511451105c45fc741d41ab30810a618",
+  "origin_sha256": "00e313752ee37515c146b185ab98d09182f95ef2b79d9dda853a1e9940e22af4",
+  "note": "מספרי השורות מתייחסים לקובץ הזה בקומיט הנקוב, אחרי הסרת ניקוד ותגיות HTML והחלפת יהוה ב-ה'."
+}
