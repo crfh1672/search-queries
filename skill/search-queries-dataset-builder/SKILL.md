@@ -17,7 +17,7 @@ Create high-quality evaluation-query records for `https://github.com/crfh1672/se
 
 ## Packaged roots
 
-`origin_path` must be `<root>/ספרים/אוצריא/<category>/…/<book>.txt` where `<root>` is one of `PACKAGED_ROOTS` in `tools/library.py` (the roots the Otzaria release merges into its library, in the order of `BOOK_ROOTS` in `otzaria-library/manual_links_packaging.py`). These are not shipped and are rejected: `extraBooks/`, `docxToOtzaria/`, `DictaToOtzaria/לא ערוך/`, and `<root>/ספרים/<anything but אוצריא>/` such as `ספרים/לא ממויין/`.
+`origin_path` must be `<root>/ספרים/אוצריא/<category>/…/<book>.txt` where `<root>` is one of `PACKAGED_ROOTS` in `tools/library.py` (the roots the Otzaria release merges into its library, in the order of `BOOK_ROOTS` in `otzaria-library/manual_links_packaging.py`). One exception: Sefaria books are generated at release time and have no packaged file in git, so they may pin the frozen export snapshot under `extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/…` (spelled `SefariaToOtzria` upstream); it stands in for `sefariaToOtzaria/sefaria_export`, so only later roots can shadow it. These are not shipped and are rejected: the rest of `extraBooks/`, `docxToOtzaria/`, `DictaToOtzaria/לא ערוך/`, and `<root>/ספרים/<anything but אוצריא>/` such as `ספרים/לא ממויין/`.
 
 A later root overrides an earlier one for the same relative path. `tools/validate.py` asks the library whether a later root holds the same relative path at the pinned commit and rejects the source if so: pin the copy the user actually sees.
 
