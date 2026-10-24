@@ -5,14 +5,24 @@ with ``<h1>`` ... ``<h6>`` (see ``otzaria-book-format`` in Otzaria/otzaria-libra
 Its TOC title is the whole line with markup removed. Markdown ``#`` lines are
 ordinary body text there, so they are ordinary body text here too.
 
-Rules, matching Otzaria's documented format:
+Rules:
 
 * ``<h1>`` is the book title; every line under it without a deeper heading is
   cited as ``פתיחת הספר``.
 * ``<hN>`` closes every open heading of level >= N. Its parent is the open
-  heading of level N-1. A heading that skips a level (h2 followed by h4) has no
-  parent, exactly as Otzaria's tree shows it.
+  heading of level N-1.
 * ``data-toc="none"`` headings are not part of the TOC and change nothing.
+
+Where Otzaria's own sources disagree, the line is *ambiguous* rather than
+guessed (checked against Otzaria/otzaria ``generator.dart`` and ``toc_parser.dart``):
+
+* A heading that skips a level (h2 followed by h4): the format document gives
+  it no parent, while the application code attaches it to the nearest shallower
+  heading. When only the book title (h1) is above, both readings give the same
+  path; when an h2 or deeper heading is above, the heading and everything
+  beneath it is ambiguous.
+* A heading preceded by whitespace: the library builder only recognises
+  ``<h`` at the physical line start, the navigator trims first. Ambiguous.
 
 A malformed heading (empty title, unterminated tag) does not make the whole
 book unusable. Lines whose path cannot be known for certain are *ambiguous*:
@@ -40,11 +50,14 @@ class HeadingIndex(NamedTuple):
 def heading(line: str) -> tuple[int, str] | None:
     """Return (level, visible title), or None when the line is not a TOC heading.
 
-    Raises ValueError for a line that starts a heading but is malformed.
+    Raises ValueError for a line that starts a heading but is malformed, or
+    that Otzaria's parsers read differently (indented heading).
     """
     match = HTML_HEADING_START_RE.match(line)
     if not match:
         return None
+    if line[0].isspace():
+        raise ValueError("indented heading: Otzaria's parsers disagree")
     if ">" not in line[: match.end() + 1]:
         raise ValueError("unterminated HTML heading tag")
     if TOC_EXCLUDE_RE.search(match.group(2)):
@@ -56,8 +69,9 @@ def heading(line: str) -> tuple[int, str] | None:
 
 
 def analyze(lines: list[str]) -> HeadingIndex:
-    stack: dict[int, tuple[str, ...]] = {}
-    section_stack: dict[int, tuple] = {}
+    # A None path/section marks a heading whose position is ambiguous.
+    stack: dict[int, tuple[str, ...] | None] = {}
+    section_stack: dict[int, tuple | None] = {}
     references: list[str | None] = []
     section_ids: list[tuple | None] = []
     problems: dict[int, str] = {}
@@ -83,7 +97,7 @@ def analyze(lines: list[str]) -> HeadingIndex:
                 section_ids.append(None)
             elif stack:
                 top = max(stack)
-                references.append(" > ".join(stack[top]))
+                references.append(" > ".join(stack[top]) if stack[top] is not None else None)
                 section_ids.append(section_stack[top])
             else:
                 references.append(OPENING)
@@ -120,8 +134,18 @@ def analyze(lines: list[str]) -> HeadingIndex:
             parent_path, parent_section = (), root_section
         elif level - 1 in stack:
             parent_path, parent_section = stack[level - 1], section_stack[level - 1]
-        else:  # skipped level: the heading stays without a parent
+        elif any(k in stack for k in range(2, level - 1)):
+            # Skipped level below a real h2+ ancestor: the format document gives
+            # no parent, the application code picks the ancestor. Ambiguous.
+            parent_path, parent_section = None, None
+        else:  # nothing but the book title above: both readings agree
             parent_path, parent_section = (), root_section
+        if parent_path is None:
+            stack[level] = None
+            section_stack[level] = None
+            references.append(None)
+            section_ids.append(None)
+            continue
         path = parent_path + (title,)
         key = (parent_section, level, title)
         counts[key] = counts.get(key, 0) + 1

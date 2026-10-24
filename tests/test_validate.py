@@ -61,8 +61,9 @@ class Valid(Base):
         self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
         self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
-    def test_skipped_heading_level_stays_without_parent(self):
-        # Otzaria's tree: a heading that skips a level has no parent.
+    def test_skipped_heading_level_is_ambiguous_not_guessed(self):
+        # Otzaria's format document and its application code disagree on the
+        # parent of a heading that skips a level, so nothing beneath it is citable.
         refs = source_refs.line_references([
             "<h1>ספר</h1>",
             "<h2>A</h2>",
@@ -71,11 +72,18 @@ class Valid(Base):
             "<h5>C</h5>",
             "child",
             "<h3>D</h3>",
+            "fine",
         ])
-        self.assertEqual(refs[2], "B")
-        self.assertEqual(refs[3], "B")
-        self.assertEqual(refs[5], "B > C")
+        self.assertEqual(refs[1], "A")
+        self.assertEqual(refs[2:6], [None, None, None, None])
         self.assertEqual(refs[6], "A > D")
+        self.assertEqual(refs[7], "A > D")
+
+    def test_indented_heading_is_ambiguous(self):
+        index = source_refs.analyze(["<h1>ספר</h1>", "<h2>A</h2>", "  <h3>B</h3>", "body", "<h2>C</h2>", "x"])
+        self.assertIn(3, index.problems)
+        self.assertEqual(index.references[2:4], [None, None])
+        self.assertEqual(index.references[5], "C")
 
     def test_heading_reference_preserves_visible_title(self):
         refs = source_refs.line_references([
@@ -370,6 +378,23 @@ class SourceChecks(Base):
             self.skipTest(f"directory symlink is unavailable: {exc}")
         errors = validate.validate_dataset(link, loader=lambda d, m: (self.lib, None))
         self.assertTrue(any("קישור סמלי" in error for error in errors))
+
+    def test_explicit_category_target_reports_pruned_symlinks(self):
+        import contextlib, io
+        category = os.path.join(self.tmp, "datasets", "הלכה")
+        outside = os.path.join(self.tmp, "outside")
+        os.makedirs(category)
+        os.makedirs(outside)
+        link = os.path.join(category, "ספר")
+        try:
+            os.symlink(outside, link, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            code = validate.main(["validate.py", category, "--offline"])
+        self.assertEqual(code, 1)
+        self.assertIn("symlinks are not allowed", out.getvalue())
 
     def test_dataset_discovery_does_not_follow_symlinked_book(self):
         root = os.path.join(self.tmp, "datasets")

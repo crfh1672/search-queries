@@ -155,6 +155,11 @@ def main():
         library.validate_source_origin(meta)
     except (KeyError, TypeError, ValueError) as exc:
         raise SystemExit(f"מקור לא תקין: {exc}") from exc
+    if meta.get("book_name") != name:
+        raise SystemExit(
+            f"book_name במטא־נתונים ({meta.get('book_name')!r}) אינו שם התיקייה ({name!r}); "
+            "לא ניתן להשוות מקור של ספר אחר מול השאילתות של התיקייה הזו"
+        )
 
     pinned, why = library.get_pinned(name, meta)
     if why:
