@@ -73,6 +73,25 @@ class PromotePathSafetyTests(unittest.TestCase):
             self.skipTest(f"directory symlink is unavailable: {exc}")
         self.run_main(link)
 
+    def test_link_before_dot_dot_is_not_collapsed_away(self):
+        draft = self.create_draft()
+        outside = self.root / "outside"
+        outside.mkdir()
+        link = draft.parent / "קישור"
+        try:
+            link.symlink_to(outside, target_is_directory=True)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"directory symlink is unavailable: {exc}")
+        self.run_main(link / ".." / draft.name)
+
+    def test_unreadable_tree_is_reported_without_a_traceback(self):
+        draft = self.create_draft()
+        with patch.object(promote_dataset.pathsafe, "links_in_tree", side_effect=PermissionError("denied")):
+            result, _, stderr = self.run_promotion(draft)
+        self.assertEqual(result, 1)
+        self.assertTrue(draft.exists())
+        self.assertIn("PermissionError", stderr)
+
     def test_symlink_inside_draft_exits_with_usage_error(self):
         draft = self.create_draft()
         target = self.root / "outside.txt"

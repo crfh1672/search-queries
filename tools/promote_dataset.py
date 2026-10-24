@@ -29,7 +29,7 @@ def main(argv=None) -> int:
     args = parser.parse_args(argv)
 
     root = Path(os.path.abspath(REPO_ROOT))
-    draft = Path(os.path.abspath(args.draft))
+    draft = Path(args.draft).absolute()  # keeps '..' so a link before it is seen
     if pathsafe.link_component(draft, root) is not None:
         parser.error("draft path must not contain symlinks or junctions")
     try:
@@ -40,7 +40,12 @@ def main(argv=None) -> int:
         parser.error("draft path must be an existing directory")
     if len(relative.parts) != 3 or relative.parts[0] != "drafts":
         parser.error("expected drafts/<source-category>/<book-folder>")
-    if pathsafe.links_in_tree(draft):
+    try:
+        draft_links = pathsafe.links_in_tree(draft)
+    except OSError as exc:
+        print(f"הטיוטה לא הועברה: לא ניתן לבדוק קישורים ({type(exc).__name__}: {exc})", file=sys.stderr)
+        return 1
+    if draft_links:
         parser.error("draft must not contain symlinks or junctions")
 
     category, book = relative.parts[1], relative.parts[2]
