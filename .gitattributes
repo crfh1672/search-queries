@@ -1,0 +1,9 @@
+*.py text eol=lf
+*.md text eol=lf
+*.json text eol=lf
+*.yml text eol=lf
+# Fixtures and datasets are hashed and compared byte for byte; never convert
+# line endings. These rules come last so they win over the patterns above.
+tests/fixture/** -text
+datasets/** -text
+drafts/** -text
