@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "פרטי מקור של מערך שאילתות",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["book_name","source_category","id_prefix","origin_repo","origin_path","origin_commit","origin_sha256","note"],
+  "properties": {
+    "book_name": {"type": "string", "minLength": 1},
+    "source_category": {"type": "string", "minLength": 1},
+    "id_prefix": {"type": "string", "pattern": "^[a-z]+$"},
+    "origin_repo": {"const": "https://github.com/Otzaria/otzaria-library"},
+    "origin_path": {"type": "string", "pattern": "^(?!.*\\\\)(?!.*//)(?!.*(?:^|/)\\.{1,2}(?:/|$))(?!.*(?:^|/)ספרים/אוצריא/(?:.*/)?ספרים/אוצריא/)(?:Ben-YehudaToOtzaria|DictaToOtzaria/ערוך|OnYourWayToOtzaria|OraytaToOtzaria|tashmaToOtzaria|sefariaToOtzaria/sefaria_export|sefariaToOtzaria/sefaria_api|MoreBooks|KSK|wikiJewishBooksToOtzaria|wikisourceToOtzaria|ToratEmetToOtzaria|pninimToOtzaria|National-LibraryToOtzaria|yam-HaHachmaToOtzaria|BeitAharonVeYisraelToOtzaria)/ספרים/אוצריא/[^/]+/(?:[^/]+/)*[^/]+\\.txt$"},
+    "origin_commit": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+    "origin_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+    "note": {"type": "string"}
+  }
+}
