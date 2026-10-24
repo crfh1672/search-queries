@@ -61,9 +61,8 @@ class Valid(Base):
         self.assertEqual(refs[5], "הלכות ציצית > סימן א > סעיף קטן א")
         self.assertEqual(refs[7], "הלכות ציצית > סימן ב")
 
-    def test_skipped_heading_level_is_ambiguous_not_guessed(self):
-        # Otzaria's format document and its application code disagree on the
-        # parent of a heading that skips a level, so nothing beneath it is citable.
+    def test_skipped_heading_level_hangs_under_the_nearest_shallower_heading(self):
+        # As in Otzaria's generator: h4 after h2 is a child of that h2.
         refs = source_refs.line_references([
             "<h1>ספר</h1>",
             "<h2>A</h2>",
@@ -73,16 +72,19 @@ class Valid(Base):
             "child",
             "<h3>D</h3>",
             "fine",
+            "<h6>E</h6>",
+            "deep",
         ])
-        self.assertEqual(refs[1], "A")
-        self.assertEqual(refs[2:6], [None, None, None, None])
-        self.assertEqual(refs[6], "A > D")
+        self.assertEqual(refs[2], "A > B")
+        self.assertEqual(refs[3], "A > B")
+        self.assertEqual(refs[5], "A > B > C")
         self.assertEqual(refs[7], "A > D")
+        self.assertEqual(refs[9], "A > D > E")
 
-    def test_indented_heading_is_ambiguous(self):
-        index = source_refs.analyze(["<h1>ספר</h1>", "<h2>A</h2>", "  <h3>B</h3>", "body", "<h2>C</h2>", "x"])
-        self.assertIn(3, index.problems)
-        self.assertEqual(index.references[2:4], [None, None])
+    def test_indented_heading_is_an_ordinary_heading(self):
+        index = source_refs.analyze(["<h1>ספר</h1>", "<h2>A</h2>", "  <h3>B</h3>", "body", "\t<h2>C</h2>", "x"])
+        self.assertEqual(index.problems, {})
+        self.assertEqual(index.references[3], "A > B")
         self.assertEqual(index.references[5], "C")
 
     def test_heading_reference_preserves_visible_title(self):
