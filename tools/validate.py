@@ -15,66 +15,96 @@
 קוד יציאה 1 אם נמצאה בעיה.
 """
 import csv, hashlib, json, os, re, sys
+from pathlib import Path
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+TOOLS_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, TOOLS_DIR)
 import library
+import pathsafe
+import source_refs
 
 FIELDS = ["id", "query", "type", "correct_ref", "correct_quote", "correct_line",
           "near_miss_ref", "near_miss_quote", "near_miss_line",
-          "near_miss_same_amud", "split", "verified_by_human"]
+          "near_miss_same_section", "split", "verified_by_human"]
 OPTIONAL_EMPTY = {"verified_by_human"}
 TYPES = {"conceptual", "short"}
 SPLITS = {"test", "train"}
 YESNO = {"כן", "לא"}
-META_KEYS = {"masechet", "id_prefix", "origin_repo", "origin_path",
-             "origin_commit", "origin_sha256", "note"}
-LINE_RE = re.compile(r"^\d+(-\d+)?$")
-HEADER_RE = re.compile(r'^\s*דף ([א-ת"״׳\']+)([.:])\s*$')
+META_KEYS = library.SOURCE_META_KEYS
+LINE_RE = re.compile(r"^(\d+)(?:-(\d+))?$")
+ID_RE = re.compile(r"^[a-z]+-\d{3,}$")
 
 
-def amud_ranges(lines):
-    """(אותיות הדף, 'א'/'ב') -> (שורה ראשונה, שורה אחרונה), מספור מ-1."""
-    heads = []
-    for i, l in enumerate(lines):
-        m = HEADER_RE.match(l)
-        if m:
-            # Normalize Hebrew numeral punctuation so refs use letters only
-            # (e.g. the heading י״א is referenced as יא).
-            raw_daf = m.group(1)
-            daf = re.sub(r"""["״׳']""", "", raw_daf)
-            if not re.fullmatch(r"[א-ת]+", daf):
-                raise ValueError(
-                    f"malformed page heading at source line {i + 1}: {l!r}"
-                )
-            heads.append((i + 1, daf, "א" if m.group(2) == "." else "ב"))
-    out = {}
-    for k, (ln, daf, amud) in enumerate(heads):
-        key = (daf, amud)
-        if key in out:
-            previous_line, _ = out[key]
-            raise ValueError(
-                f'duplicate normalized page heading {daf} ע"{amud} '
-                f'at source lines {previous_line} and {ln}'
-            )
-        end = heads[k + 1][0] - 1 if k + 1 < len(heads) else len(lines)
-        out[key] = (ln, end)
-    return out
+class DuplicateJSONKeyError(ValueError):
+    """A JSON object contains the same key more than once."""
 
 
-def parse_ref(ref, masechet):
-    m = re.fullmatch(re.escape(masechet) + r' ([א-ת]+) ע"([אב])', ref)
-    return (m.group(1), m.group(2)) if m else None
+def unique_json_object(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise DuplicateJSONKeyError(f"duplicate JSON key {key!r}")
+        result[key] = value
+    return result
 
 
-def span(s):
-    a, _, b = s.partition("-")
-    return int(a), int(b or a)
+is_path_link = pathsafe.is_link
+VERIFIERS_FILE = Path(TOOLS_DIR).parent / "verifiers.txt"
 
 
-def validate_dataset(d, loader=None, offline=False):
-    """loader(d, meta) -> (bytes, error) מאפשר לבדיקות להחליף את המשיכה מהספרייה."""
+def load_verifiers(path=None):
+    """Names allowed in verified_by_human for approved datasets (verifiers.txt).
+
+    One name per line; blank lines and lines starting with # are ignored.
+    """
+    path = Path(path or VERIFIERS_FILE)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return set()
+    return {
+        line.strip() for line in text.splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    }
+
+
+def span(s, max_line=None):
+    match = LINE_RE.fullmatch(s)
+    if not match:
+        raise ValueError(f"invalid line range {s!r}")
+    first = match.group(1)
+    last = match.group(2) or first
+    # Reject absurdly long integers before int() can raise Python's digit-limit
+    # exception. Ordinary out-of-range values are parsed and reported as such.
+    if len(first) > 4000 or len(last) > 4000:
+        raise ValueError(f"line range {s!r} is too large to parse safely")
+    a, b = int(first), int(last)
+    if a < 1 or b < a:
+        raise ValueError(f"invalid line range {s!r}")
+    return a, b
+
+
+def validate_dataset(d, loader=None, offline=False, require_verified=None,
+                     verifiers=None, shadow_check=None):
+    """Validate a dataset against a pinned .txt book from Otzaria's library.
+
+    loader(d, meta) -> (bytes, error) lets unit tests replace network fetching.
+    verifiers: names accepted in verified_by_human for approved datasets
+        (default: verifiers.txt at the repository root).
+    shadow_check(meta) -> list of later packaged roots overriding the pinned
+        file; by default the library is queried (skipped when a loader is given).
+    """
     errs = []
     def err(msg): errs.append(f"{d}: {msg}")
+
+    dataset_path = Path(d).absolute()
+    symlink = path_symlink_component(dataset_path)
+    if symlink is not None:
+        return [f"{symlink}: נתיב המכיל קישור סמלי אינו נבדק"]
+    if dataset_path.is_dir():
+        links = symlink_entries(dataset_path)
+        if links:
+            return [f"{link}: קישורים סמליים אסורים בתוך מערך נתונים" for link in links]
 
     name = os.path.basename(os.path.normpath(d))
     f_jsonl, f_csv, f_meta = f"{name}.jsonl", f"{name}.csv", f"{name}.מקור.json"
@@ -87,50 +117,128 @@ def validate_dataset(d, loader=None, offline=False):
     # --- קובץ המקור (<מסכת>.מקור.json) ---
     try:
         with open(os.path.join(d, f_meta), encoding="utf-8") as f:
-            meta = json.load(f)
-    except json.JSONDecodeError as e:
+            meta = json.load(f, object_pairs_hook=unique_json_object)
+    except (json.JSONDecodeError, DuplicateJSONKeyError) as e:
         return [f"{d}/{f_meta}: JSON לא תקין ({e})"]
+    except (UnicodeDecodeError, OSError) as e:
+        return [f"{d}/{f_meta}: לא ניתן לקרוא JSON תקין ({e})"]
+    if not isinstance(meta, dict):
+        return [f"{d}/{f_meta}: המטא־נתונים חייבים להיות אובייקט JSON"]
     if set(meta) != META_KEYS:
         err(f"{f_meta}: מפתחות לא תקינים. חסרים {sorted(META_KEYS - set(meta))}, מיותרים {sorted(set(meta) - META_KEYS)}")
+        return errs
+    try:
+        source_category = library.validate_source_origin(meta)
+    except (KeyError, TypeError, ValueError) as exc:
+        err(f"{f_meta}: מקור לא תקין: {exc}")
+        return errs
+    if not all(isinstance(meta.get(key), str) for key in META_KEYS):
+        err(f"{f_meta}: כל ערכי המטא־נתונים חייבים להיות מחרוזות")
+        return errs
+    if not re.fullmatch(r"[a-z]+", meta["id_prefix"]):
+        err(f"{f_meta}: id_prefix חייב להכיל אותיות לטיניות קטנות בלבד")
+        return errs
+    if not meta["book_name"].strip():
+        err(f"{f_meta}: book_name אינו יכול להיות ריק")
         return errs
     if not (isinstance(meta.get("origin_commit"), str) and re.fullmatch(r"[0-9a-f]{40}", meta["origin_commit"])):
         err(f"{f_meta}: origin_commit חייב להיות SHA מלא של קומיט (40 תווים)")
         return errs
+    if not (isinstance(meta.get("origin_sha256"), str) and re.fullmatch(r"[0-9a-f]{64}", meta["origin_sha256"])):
+        err(f"{f_meta}: origin_sha256 חייב להיות SHA-256 מלא (64 תווים)")
+        return errs
+
+    repo_root = Path(TOOLS_DIR).parent
+    if require_verified is None:
+        require_verified = False
+        try:
+            relative = Path(d).resolve().relative_to(repo_root.resolve())
+            require_verified = bool(relative.parts and relative.parts[0] == "datasets")
+        except ValueError:
+            pass
+
+    # Approved/pending paths use datasets/<category>/<book> or drafts/<category>/<book>.
+    try:
+        relative = Path(d).resolve().relative_to(repo_root.resolve())
+        if relative.parts and relative.parts[0] in {"datasets", "drafts"}:
+            if len(relative.parts) != 3:
+                err(f"נתיב מערך חייב להיות {relative.parts[0]}/<קטגוריה>/<שם ספר>")
+            elif relative.parts[1] != source_category:
+                err(f"קטגוריית התיקייה ({relative.parts[1]}) אינה תואמת לקטגוריית המקור ({source_category})")
+    except ValueError:
+        pass
+
+    if meta.get("book_name") != name:
+        err(f"שם התיקייה ({name}) חייב להיות זהה ל-book_name ב-{f_meta} ({meta.get('book_name')})")
+        return errs
     if loader is None:
-        slug = os.path.basename(os.path.normpath(d))
-        data, why = library.get_pinned(slug, meta, offline)
+        data, why = library.get_pinned(name, meta, offline)
     else:
         data, why = loader(d, meta)
     if why:
-        err(f"קובץ הספרייה: {why}")
+        err(f"קובץ המקור מאוצריא: {why}")
+        return errs
+    if not isinstance(data, bytes):
+        err("קובץ המקור חייב להיטען כ-bytes")
         return errs
     if hashlib.sha256(data).hexdigest() != meta["origin_sha256"]:
-        err(f"קובץ הספרייה שונה מ-origin_sha256 שב-{f_meta}")
+        err(f"קובץ המקור שונה מ-origin_sha256 שב-{f_meta}")
         return errs
-    lines = [library.norm(l.rstrip("\r")) for l in data.decode("utf-8").split("\n")]
+    if shadow_check is None and loader is None:
+        def shadow_check(m):
+            return library.shadowing_roots(m, offline=offline)
+    if shadow_check is not None:
+        try:
+            shadowed = shadow_check(meta)
+        except Exception as exc:
+            err(f"לא ניתן לבדוק אם הקובץ נדרס על ידי שורש מאוחר בספרייה ({type(exc).__name__}: {exc}); "
+                "אפשר להריץ עם --offline אם התשובה כבר במטמון")
+            return errs
+        if shadowed is None:
+            if require_verified:
+                err("לא ניתן לאמת offline שהקובץ הנעוץ אינו נדרס על ידי שורש מאוחר בספרייה. "
+                    "יש להריץ פעם אחת עם רשת כדי לשמור את התשובה במטמון")
+                return errs
+        elif shadowed:
+            err(f"הקובץ הנעוץ נדרס בספרייה המשוחררת על ידי עותק באותו נתיב יחסי תחת: {', '.join(shadowed)}. "
+                "המשתמש רואה את העותק האחר, לכן יש להצמיד אותו במקום")
+            return errs
     try:
-        ranges = amud_ranges(lines)
-    except ValueError as e:
-        err(str(e))
+        raw_lines = [line.rstrip("\r") for line in data.decode("utf-8").split("\n")]
+    except UnicodeDecodeError as exc:
+        err(f"קובץ המקור אינו UTF-8 תקין: {exc}")
         return errs
-    masechet, prefix = meta["masechet"], meta["id_prefix"]
-    if masechet != name:
-        err(f"שם התיקייה ({name}) חייב להיות זהה לשם המסכת ב-{f_meta} ({masechet})")
+    lines = [library.norm(line) for line in raw_lines]
+    index = source_refs.analyze(raw_lines)
+    refs, section_ids = index.references, index.section_ids
+    prefix = meta["id_prefix"]
+    allowed = None
+    if require_verified:
+        allowed = load_verifiers() if verifiers is None else set(verifiers)
 
     # --- JSONL ---
     rows = []
-    with open(os.path.join(d, f_jsonl), "rb") as f:
-        data = f.read()
+    try:
+        with open(os.path.join(d, f_jsonl), "rb") as f:
+            data = f.read()
+    except OSError as exc:
+        err(f"{f_jsonl}: לא ניתן לקרוא את הקובץ ({exc})")
+        return errs
     if data.startswith(b"\xef\xbb\xbf"):
         err(f"{f_jsonl}: אסור BOM")
     if data and not data.endswith(b"\n"):
         err(f"{f_jsonl}: חסר מעבר שורה בסוף הקובץ")
-    for n, line in enumerate(data.decode("utf-8-sig").split("\n"), 1):
+    try:
+        jsonl_text = data.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        err(f"{f_jsonl}: הקובץ אינו בקידוד UTF-8 ({exc})")
+        return errs
+    for n, line in enumerate(jsonl_text.split("\n"), 1):
         if not line.strip():
             continue
         try:
-            r = json.loads(line)
-        except json.JSONDecodeError as e:
+            r = json.loads(line, object_pairs_hook=unique_json_object)
+        except (json.JSONDecodeError, DuplicateJSONKeyError) as e:
             err(f"{f_jsonl}:{n}: JSON לא תקין ({e})"); continue
         if not isinstance(r, dict):
             err(f"{f_jsonl}:{n}: השורה אינה אובייקט"); continue
@@ -164,53 +272,100 @@ def validate_dataset(d, loader=None, offline=False):
         seen.add(r["id"])
         if r["type"] not in TYPES: err(f"{w}: type לא חוקי ({r['type']})")
         if r["split"] not in SPLITS: err(f"{w}: split לא חוקי ({r['split']})")
-        if r["near_miss_same_amud"] not in YESNO: err(f"{w}: near_miss_same_amud חייב להיות כן/לא")
+        if r["near_miss_same_section"] not in YESNO: err(f"{w}: near_miss_same_section חייב להיות כן/לא")
+        if require_verified:
+            verifier = r["verified_by_human"].strip()
+            if not verifier:
+                err(f"{w}: מערך מאושר חייב לכלול verified_by_human")
+            elif verifier not in allowed:
+                err(f"{w}: verified_by_human ({verifier!r}) אינו מופיע ב-verifiers.txt. "
+                    "רק אדם שנרשם שם והשווה בפועל את הרשומה למקור יכול לאשר")
         if r["correct_quote"] == r["near_miss_quote"]:
             err(f"{w}: הציטוט הנכון והכמעט נכון זהים")
         for which in ("correct", "near_miss"):
             ref, line_s, quote = r[f"{which}_ref"], r[f"{which}_line"], r[f"{which}_quote"]
-            pr = parse_ref(ref, masechet)
-            if not pr:
-                err(f"{w}: {which}_ref לא תקין ({ref})"); continue
-            if pr not in ranges:
-                err(f"{w}: {which}_ref מצביע על עמוד שאינו בקובץ המקור ({ref})"); continue
-            if not LINE_RE.match(line_s):
+            if not LINE_RE.fullmatch(line_s):
                 err(f"{w}: {which}_line לא תקין ({line_s})"); continue
-            a, b = span(line_s)
-            if a < 1 or b > len(lines) or a > b:
+            try:
+                a, b = span(line_s, len(lines))
+            except ValueError as exc:
+                err(f"{w}: {which}_line לא תקין ({exc})"); continue
+            if b > len(lines):
                 err(f"{w}: {which}_line מחוץ לקובץ ({line_s})"); continue
-            lo, hi = ranges[pr]
-            if a < lo or b > hi:
-                err(f"{w}: {which}_line {line_s} אינו בתוך {ref} (שורות {lo}-{hi})")
+            unresolved = next((ln for ln in range(a, b + 1) if refs[ln - 1] is None), None)
+            if unresolved is not None:
+                err(f"{w}: {which}_line {line_s} נשען על מבנה כותרות לא ודאי בשורה {unresolved}: "
+                    f"{source_refs.explain_ambiguity(index.problems, unresolved)}")
+                continue
+            expected_ref = refs[a - 1]
+            if ref != expected_ref:
+                err(f"{w}: {which}_ref אינו תואם למסלול הכותרות בשורה {a} ({ref!r} במקום {expected_ref!r})")
+            expected_section = section_ids[a - 1]
+            crossed = next(
+                (
+                    ln for ln in range(a + 1, b + 1)
+                    if refs[ln - 1] != expected_ref or section_ids[ln - 1] != expected_section
+                ),
+                None,
+            )
+            if crossed is not None:
+                err(f"{w}: {which}_line {line_s} חוצה גבול כותרת בשורה {crossed}")
             seg = lines[a - 1:b]
             q = library.norm(quote)
+            if not q:
+                err(f"{w}: הציטוט של {which} ריק אחרי נירמול")
+                continue
             if q not in "\n".join(seg) and q not in " ".join(seg):
                 err(f"{w}: הציטוט של {which} לא נמצא בשורה {line_s}")
-        if LINE_RE.match(r["correct_line"]) and LINE_RE.match(r["near_miss_line"]):
-            ca, cb = span(r["correct_line"]); na, nb = span(r["near_miss_line"])
+        if LINE_RE.fullmatch(r["correct_line"]) and LINE_RE.fullmatch(r["near_miss_line"]):
+            try:
+                ca, cb = span(r["correct_line"], len(lines))
+                na, nb = span(r["near_miss_line"], len(lines))
+            except ValueError:
+                # The per-citation loop already reports malformed/oversized ranges.
+                continue
             if not (cb < na or nb < ca):
                 err(f"{w}: הציטוט הנכון והכמעט נכון נמצאים באותה שורה "
                     f"({r['correct_line']} / {r['near_miss_line']}). שלילי חייב להיות משורה אחרת")
-        same = r["correct_ref"] == r["near_miss_ref"]
-        if r["near_miss_same_amud"] in YESNO and (r["near_miss_same_amud"] == "כן") != same:
-            err(f"{w}: near_miss_same_amud לא עקבי עם ה-refs")
+        # "כן" means both citations sit in the very same section instance. Two
+        # sibling headings with an identical title give identical refs but are
+        # different sections, so the comparison uses section IDs, not strings.
+        flag = r["near_miss_same_section"]
+        if flag in YESNO:
+            same = None
+            try:
+                first_c = span(r["correct_line"])[0]
+                first_n = span(r["near_miss_line"])[0]
+                if max(first_c, first_n) <= len(section_ids):
+                    sec_c, sec_n = section_ids[first_c - 1], section_ids[first_n - 1]
+                    if sec_c is not None and sec_n is not None:
+                        same = sec_c == sec_n
+            except ValueError:
+                pass  # malformed ranges are reported above
+            if same is not None and (flag == "כן") != same:
+                err(f"{w}: near_miss_same_section לא עקבי עם מקטעי המקור "
+                    f"('כן' רק כששני הציטוטים באותו מקטע, גם אם הכותרות זהות במראה)")
 
     # --- CSV ---
-    with open(os.path.join(d, f_csv), encoding="utf-8-sig", newline="") as f:
-        rd = csv.reader(f)
-        try:
-            header = next(rd)
-        except StopIteration:
-            err(f"{f_csv} ריק"); return errs
-        if header != FIELDS:
-            err(f"{f_csv}: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
-        csv_rows = []
-        for i, cells in enumerate(rd, 2):
-            if not any(c.strip() for c in cells):
-                continue
-            if len(cells) != len(FIELDS):
-                err(f"{f_csv}:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
-            csv_rows.append(dict(zip(FIELDS, cells)))
+    try:
+        with open(os.path.join(d, f_csv), encoding="utf-8-sig", newline="") as f:
+            rd = csv.reader(f)
+            try:
+                header = next(rd)
+            except StopIteration:
+                err(f"{f_csv} ריק"); return errs
+            if header != FIELDS:
+                err(f"{f_csv}: הכותרת שונה מהסכמה. חסרות {[c for c in FIELDS if c not in header]}, מיותרות {[c for c in header if c not in FIELDS]}")
+            csv_rows = []
+            for i, cells in enumerate(rd, 2):
+                if not any(c.strip() for c in cells):
+                    continue
+                if len(cells) != len(FIELDS):
+                    err(f"{f_csv}:{i}: {len(cells)} עמודות במקום {len(FIELDS)}"); continue
+                csv_rows.append(dict(zip(FIELDS, cells)))
+    except (OSError, UnicodeDecodeError, csv.Error) as exc:
+        err(f"{f_csv}: לא ניתן לקרוא CSV תקין ({exc})")
+        return errs
     if header == FIELDS:
         by_id = {r["id"]: {k: r[k] for k in FIELDS} for r in rows if "id" in r}
         csv_ids = [r["id"] for r in csv_rows]
@@ -228,26 +383,165 @@ def validate_dataset(d, loader=None, offline=False):
     return errs
 
 
+def symlink_entries(root):
+    """List symbolic links without traversing them."""
+    return pathsafe.links_in_tree(root)
+
+
+def dataset_dirs(root):
+    root = Path(root)
+    if is_path_link(root) or not root.is_dir():
+        return []
+    # Walk without following symlinks. Catch canonical nested folders, metadata
+    # files, and misplaced top-level folders containing JSONL.
+    candidates = set()
+    for current, dirs, files in os.walk(root, followlinks=False):
+        base = Path(current)
+        dirs[:] = [name for name in dirs if not is_path_link(base / name)]
+        relative = base.relative_to(root)
+        if any(name.endswith(".מקור.json") and not is_path_link(base / name) for name in files):
+            candidates.add(base)
+        if len(relative.parts) == 2:
+            candidates.add(base)
+        if len(relative.parts) == 1 and any(name.endswith(".jsonl") for name in files):
+            candidates.add(base)
+    return sorted(candidates)
+
+
+def path_symlink_component(path):
+    return pathsafe.link_component(path)
+
+
+def cross_dataset_errors(directories):
+    """id_prefix and every query id must be unique across ALL datasets.
+
+    score.py merges results by id, so a collision between two books (or a draft
+    and its approved copy) would silently mix their measurements.
+    """
+    prefixes, ids, errors = {}, {}, []
+    for directory in sorted({Path(d) for d in directories}):
+        name = directory.name
+        if pathsafe.link_component(directory) is not None or pathsafe.links_in_tree(directory):
+            continue  # validate_dataset reports links
+        try:
+            meta = json.loads((directory / f"{name}.מקור.json").read_text(encoding="utf-8"),
+                              object_pairs_hook=unique_json_object)
+            prefix = meta.get("id_prefix") if isinstance(meta, dict) else None
+        except (OSError, ValueError) as exc:
+            prefix = None
+            errors.append(f"{directory}: לא ניתן לקרוא מטא-דאטה לבדיקת התנגשויות ({exc})")
+        if isinstance(prefix, str):
+            if prefix in prefixes:
+                errors.append(f"{directory}: id_prefix {prefix!r} כבר בשימוש ב-{prefixes[prefix]}")
+            else:
+                prefixes[prefix] = directory
+        try:
+            with open(directory / f"{name}.jsonl", encoding="utf-8-sig") as handle:
+                for line in handle:
+                    if not line.strip():
+                        continue
+                    row = json.loads(line, object_pairs_hook=unique_json_object)
+                    rid = row.get("id") if isinstance(row, dict) else None
+                    if not isinstance(rid, str):
+                        continue
+                    if rid in ids and ids[rid] != directory:
+                        errors.append(f"{directory}: ה-id {rid} כבר קיים ב-{ids[rid]}")
+                    else:
+                        ids[rid] = directory
+        except (OSError, ValueError) as exc:
+            # Fail closed: an unreadable file could hide a colliding id.
+            errors.append(f"{directory}: לא ניתן לקרוא JSONL לבדיקת התנגשויות ({exc})")
+    return errors
+
+
+def all_dataset_dirs(repo_root=None):
+    """Every dataset folder under datasets/ and drafts/ (links are never followed)."""
+    repo_root = Path(repo_root or Path(TOOLS_DIR).parent)
+    found = []
+    for name in ("datasets", "drafts"):
+        root = repo_root / name
+        if root.is_dir() and not is_path_link(root):
+            found.extend(dataset_dirs(root))
+    return found
+
+
+def discover_target(path):
+    path = Path(path)
+    if path.is_file():
+        path = path.parent
+    if not path.exists():
+        return []
+    if (path / f"{path.name}.מקור.json").is_file():
+        return [path]
+    return dataset_dirs(path)
+
+
 def main(argv):
     offline = "--offline" in argv
     args = [a for a in argv[1:] if a != "--offline"]
-    targets = args or sorted(
-        os.path.join("datasets", n) for n in os.listdir("datasets")
-        if os.path.isdir(os.path.join("datasets", n)))
-    all_errs, total = [], 0
-    for t in targets:
-        e = validate_dataset(t, offline=offline)
-        jp = os.path.join(t, os.path.basename(os.path.normpath(t)) + ".jsonl")
-        if os.path.isfile(jp):
-            with open(jp, encoding="utf-8") as f:
-                total += sum(1 for l in f if l.strip())
-        print(f"{'✗' if e else '✓'} {t}  ({len(e)} בעיות)")
+    repo_root = Path(TOOLS_DIR).parent.resolve()
+    scan_errors = []
+    if args:
+        targets = []
+        for arg in args:
+            supplied = Path(arg)
+            supplied = supplied if supplied.is_absolute() else Path.cwd() / supplied
+            symlink = path_symlink_component(supplied)
+            if symlink is not None:
+                scan_errors.append(f"{symlink}: paths containing symlinks are not validated")
+                continue
+            found = discover_target(supplied)
+            targets.extend((p, None) for p in found)
+            if not found:
+                targets.append((supplied, None))
+    else:
+        targets = []
+        for root_name, required in (("datasets", True), ("drafts", False)):
+            root = repo_root / root_name
+            if is_path_link(root):
+                scan_errors.append(f"{root}: dataset root must not be a symlink")
+                continue
+            if root.exists() and not root.is_dir():
+                scan_errors.append(f"{root}: dataset root must be a directory")
+                continue
+            links = symlink_entries(root)
+            scan_errors.extend(f"{link}: symlinks are not allowed under {root_name}" for link in links)
+            candidates = dataset_dirs(root)
+            targets.extend(
+                (p, required) for p in candidates
+                if not any(p == link or p in link.parents for link in links)
+            )
+
+    unique = {}
+    for path, required in targets:
+        key = str(path)
+        if key not in unique:
+            unique[key] = required
+        elif required is True:
+            unique[key] = True
+
+    all_errs, total = list(scan_errors), 0
+    for value, required in unique.items():
+        target = Path(value)
+        e = validate_dataset(str(target), offline=offline, require_verified=required)
+        jp = target / f"{target.name}.jsonl"
+        if jp.is_file() and not jp.is_symlink():
+            try:
+                with jp.open(encoding="utf-8") as handle:
+                    total += sum(1 for line in handle if line.strip())
+            except (OSError, UnicodeDecodeError) as exc:
+                all_errs.append(f"{jp}: לא ניתן לספור שורות ({exc})")
+        print(f"{'✗' if e else '✓'} {target}  ({len(e)} בעיות)")
         all_errs += e
-    for e in all_errs[:60]:
-        print(" -", e)
+    # Collisions are checked against every dataset in the repository, also when
+    # only one path was given on the command line.
+    scope = {Path(os.path.abspath(value)) for value in unique} | set(all_dataset_dirs(repo_root))
+    all_errs += cross_dataset_errors(scope)
+    for error in all_errs[:60]:
+        print(" -", error)
     if len(all_errs) > 60:
         print(f" ... ועוד {len(all_errs) - 60}")
-    print(f"נבדקו {len(targets)} מערכים, {total} שאילתות")
+    print(f"נבדקו {len(unique)} מערכים, {total} שאילתות")
     return 1 if all_errs else 0
 
 
