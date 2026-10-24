@@ -40,12 +40,18 @@ class PinnedSourceCacheTests(unittest.TestCase):
         library.CACHE_DIR = self.old_cache
         self.temp.cleanup()
 
+    def symlink(self, link, target, directory=False):
+        try:
+            link.symlink_to(target, target_is_directory=directory)
+        except (OSError, NotImplementedError) as exc:
+            self.skipTest(f"symlink is unavailable: {exc}")
+
     def test_symlinked_cache_directory_is_never_written_through(self):
         cache_root = self.root / ".cache"
         cache_root.mkdir()
         outside_file = self.outside / "keep.txt"
         outside_file.write_bytes(b"outside must remain unchanged")
-        (cache_root / "library").symlink_to(self.outside, target_is_directory=True)
+        self.symlink(cache_root / "library", self.outside, directory=True)
 
         with patch.object(library, "fetch", return_value=self.data) as fetch:
             data, error = library.get_pinned("Book", self.meta)
@@ -62,7 +68,7 @@ class PinnedSourceCacheTests(unittest.TestCase):
         outside_file = self.outside / "keep.txt"
         outside_file.write_bytes(b"outside must remain unchanged")
         cache_file = Path(library.cache_path("Book", self.meta))
-        cache_file.symlink_to(outside_file)
+        self.symlink(cache_file, outside_file)
 
         with patch.object(library, "fetch", return_value=self.data):
             data, error = library.get_pinned("Book", self.meta)
@@ -183,12 +189,31 @@ class ShadowingTests(unittest.TestCase):
                 library._exists_at("https://example.invalid/x", always_down)
         self.assertEqual(len(attempts), library._ATTEMPTS)
 
+    def test_scan_stops_at_its_shared_deadline(self):
+        import urllib.error
+        clock = [0.0]
+
+        def slow(request, timeout=0):
+            clock[0] += library._SCAN_BUDGET / 2
+            raise urllib.error.URLError("timed out")
+        with patch.object(library, "_now", lambda: clock[0]), patch.object(library, "_sleep", lambda s: None):
+            with self.assertRaises((TimeoutError, urllib.error.URLError)):
+                library.shadowing_roots(self.meta, opener=slow)
+        self.assertLessEqual(clock[0], library._SCAN_BUDGET * 1.5)
+
+    def test_cache_name_changes_with_the_full_commit_and_the_root_list(self):
+        other = dict(self.meta, origin_commit="a" * 39 + "b")
+        self.assertNotEqual(library.shadow_cache_name(self.meta), library.shadow_cache_name(other))
+        before = library.shadow_cache_name(self.meta)
+        with patch.object(library, "PACKAGED_ROOTS", library.PACKAGED_ROOTS + ("NewRoot",)):
+            self.assertNotEqual(before, library.shadow_cache_name(self.meta))
+
     def test_a_symlinked_cache_entry_is_not_read(self):
         outside = Path(self.temp.name) / "outside.json"
         outside.write_text('["KSK"]', encoding="utf-8")
         cache = Path(library.CACHE_DIR)
         cache.mkdir(parents=True)
-        name = f"shadow-{library._cache_identity(self.meta)}-{self.meta['origin_commit'][:10]}.json"
+        name = library.shadow_cache_name(self.meta)
         try:
             (cache / name).symlink_to(outside)
         except (OSError, NotImplementedError) as exc:

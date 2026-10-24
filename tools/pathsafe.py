@@ -8,6 +8,7 @@ finding new inconsistencies.
 from __future__ import annotations
 
 import os
+import stat
 from pathlib import Path
 
 
@@ -23,17 +24,17 @@ def _absolute(path) -> Path:
 def is_link(path) -> bool:
     """True for a symlink or, on Windows, a directory junction."""
     path = Path(path)
-    if path.is_symlink():
+    try:
+        info = os.lstat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False  # absent is not a link; any other error must not pass silently
+    if stat.S_ISLNK(info.st_mode):
         return True
     is_junction = getattr(path, "is_junction", None)
     if is_junction is not None:
         return bool(is_junction())
     # Python < 3.12: on Windows a junction is a reparse point.
-    try:
-        attributes = os.lstat(path).st_file_attributes
-    except (AttributeError, OSError):
-        return False
-    return bool(attributes & _REPARSE_POINT)
+    return bool(getattr(info, "st_file_attributes", 0) & _REPARSE_POINT)
 
 
 def link_component(path, root=None) -> Path | None:
@@ -51,6 +52,8 @@ def link_component(path, root=None) -> Path | None:
             relative = path.relative_to(root)
         except ValueError:
             relative = None  # outside the root: no ancestor is exempt
+        if relative is not None and ".." in relative.parts:
+            relative = None  # root/../x has left the root, whatever its spelling
         if relative is not None:
             current = root
             if is_link(current):
