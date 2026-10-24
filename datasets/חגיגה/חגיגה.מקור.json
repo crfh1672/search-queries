@@ -1,0 +1,9 @@
+{
+  "masechet": "חגיגה",
+  "id_prefix": "chagiga",
+  "origin_repo": "https://github.com/Otzaria/otzaria-library",
+  "origin_path": "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר מועד/חגיגה.txt",
+  "origin_commit": "ee0264f9e511451105c45fc741d41ab30810a618",
+  "origin_sha256": "774d3628793db91ba7bede43a1effda61b5095622df7636d1d083ab8624e556b",
+  "note": "מספרי השורות מתייחסים לקובץ הזה בקומיט הנקוב, אחרי הסרת ניקוד ותגיות HTML והחלפת יהוה ב-ה'."
+}
