@@ -72,7 +72,7 @@ def schema_origin_path_pattern():
     roots = "|".join(re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", root) for root in PACKAGED_ROOTS)
     return (
         r"^(?!.*\\)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))"
-        r"(?!.*(?:^|/)ספרים/אוצריא/.*(?:^|/)ספרים/אוצריא/)"
+        r"(?!.*(?:^|/)ספרים/אוצריא/(?:.*/)?ספרים/אוצריא/)"
         rf"(?:{roots})/ספרים/אוצריא/[^/]+/(?:[^/]+/)*[^/]+\.txt$"
     )
 
@@ -267,22 +267,31 @@ def get_pinned(slug, meta, offline=False):
 
 _RETRY_STATUS = {429, 500, 502, 503, 504}
 _ATTEMPTS = 4
+_REQUEST_TIMEOUT = 20
+_SCAN_BUDGET = 180  # seconds for the whole shadow scan, shared by all roots
 
 
 def _sleep(seconds):
     time.sleep(seconds)
 
 
-def _exists_at(url, opener):
+def _now():
+    return time.monotonic()
+
+
+def _exists_at(url, opener, deadline=None):
     """HEAD request with a few bounded retries for rate limits and server errors.
 
     404 means "not there". Any other persistent failure propagates, so an
-    unreachable answer is never mistaken for "not shadowed".
+    unreachable answer is never mistaken for "not shadowed". *deadline* is a
+    monotonic time after which no further attempt is started.
     """
     request = urllib.request.Request(url, method="HEAD")
     for attempt in range(_ATTEMPTS):
+        if deadline is not None and _now() >= deadline:
+            raise TimeoutError("the shadow check exceeded its time budget")
         try:
-            with opener(request, timeout=60):
+            with opener(request, timeout=_REQUEST_TIMEOUT):
                 return True
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -295,6 +304,12 @@ def _exists_at(url, opener):
         _sleep(2 ** attempt)
 
 
+def shadow_cache_name(meta):
+    """Cache file name; it changes with the full commit and with the root list."""
+    roots = hashlib.sha256("\n".join(PACKAGED_ROOTS).encode("utf-8")).hexdigest()[:12]
+    return f"shadow-{_cache_identity(meta)}-{meta['origin_commit']}-{roots}.json"
+
+
 def shadowing_roots(meta, offline=False, opener=None):
     """Later packaged roots that hold the same relative path at the pinned commit.
 
@@ -304,7 +319,7 @@ def shadowing_roots(meta, offline=False, opener=None):
     Results are cached because a commit is immutable.
     """
     index, below = split_packaged_path(meta["origin_path"])
-    name = f"shadow-{_cache_identity(meta)}-{meta['origin_commit'][:10]}.json"
+    name = shadow_cache_name(meta)
     try:
         cache_dir = safe_cache_directory(create=False)
     except (OSError, ValueError):
@@ -322,9 +337,10 @@ def shadowing_roots(meta, offline=False, opener=None):
         return None
     opener = opener or urllib.request.urlopen
     shadows = []
+    deadline = _now() + _SCAN_BUDGET
     for later in PACKAGED_ROOTS[index + 1:]:
         candidate = dict(meta, origin_path="/".join((later, *LIBRARY_DIR, *below)))
-        if _exists_at(raw_url(candidate, meta["origin_commit"]), opener):
+        if _exists_at(raw_url(candidate, meta["origin_commit"]), opener, deadline):
             shadows.append(later)
     _write_cache_atomic(name, json.dumps(shadows).encode("utf-8"))
     return shadows
