@@ -9,7 +9,7 @@ Create high-quality evaluation-query records for `https://github.com/crfh1672/se
 
 ## Non-negotiable rules
 
-- **Source.** Every query and citation must be based on the exact committed `.txt` file in `https://github.com/Otzaria/otzaria-library` that the Otzaria application actually ships (see "Packaged roots" below). Never source records from other repositories, web pages, memory, or guessed locations.
+- **Source.** Every query and citation must be based on the exact committed `.txt` file in `https://github.com/Otzaria/otzaria-library` that the Otzaria application actually ships, or, for Sefaria books only, the frozen export snapshot that stands in for the file generated at release time (see "Packaged roots" below). Never source records from other repositories, web pages, memory, or guessed locations.
 - **No invented values.** Never invent a source path, commit SHA, SHA-256, quotation, heading reference, or line number. Use only values verified against the exact source bytes at the pinned commit.
 - **Human verification is human.** Never write anything into `verified_by_human` unless a named human actually compared the record with the source. Agents leave it empty. Approved datasets accept only names listed in `verifiers.txt`. Never claim in a report that a record was human-verified if no human did it.
 - **Validation is not review.** Structural validation proves locations and consistency, not that a query is natural or that the near miss truly fails to answer it. Do not let an LLM explanation or a green CI replace semantic review.

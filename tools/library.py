@@ -21,7 +21,8 @@ SOURCE_META_KEYS = {
 # keep in the same order). Every root contributes <root>/ספרים/אוצריא/…, and a
 # LATER root overrides an EARLIER one for the same relative path.
 #
-# NOT packaged, therefore never valid sources here: extraBooks/, docxToOtzaria/,
+# NOT packaged, therefore never valid sources here: extraBooks/ (except the Sefaria
+# export snapshot, see SNAPSHOT_ROOTS below), docxToOtzaria/,
 # DictaToOtzaria/לא ערוך/, MoreBooks/ספרים/ outside אוצריא/, and any
 # <source>/ספרים/<something other than אוצריא>/ such as ספרים/לא ממויין/.
 PACKAGED_ROOTS = (
