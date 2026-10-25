@@ -1,0 +1,10 @@
+{
+  "book_name": "ברכות",
+  "source_category": "תלמוד בבלי",
+  "id_prefix": "berakhot",
+  "origin_repo": "https://github.com/Otzaria/otzaria-library",
+  "origin_path": "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר זרעים/ברכות.txt",
+  "origin_commit": "ee0264f9e511451105c45fc741d41ab30810a618",
+  "origin_sha256": "1b964444b70eb78924a10ab47e40e3aadd1909921216814a4b77a41923d134d7",
+  "note": "מספרי השורות מתייחסים לקובץ הזה בקומיט הנקוב, אחרי הסרת ניקוד ותגיות HTML והחלפת יהוה ב-ה'."
+}
