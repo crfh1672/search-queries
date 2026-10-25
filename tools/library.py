@@ -21,7 +21,8 @@ SOURCE_META_KEYS = {
 # keep in the same order). Every root contributes <root>/ספרים/אוצריא/…, and a
 # LATER root overrides an EARLIER one for the same relative path.
 #
-# NOT packaged, therefore never valid sources here: extraBooks/, docxToOtzaria/,
+# NOT packaged, therefore never valid sources here: extraBooks/ (except the Sefaria
+# export snapshot, see SNAPSHOT_ROOTS below), docxToOtzaria/,
 # DictaToOtzaria/לא ערוך/, MoreBooks/ספרים/ outside אוצריא/, and any
 # <source>/ספרים/<something other than אוצריא>/ such as ספרים/לא ממויין/.
 PACKAGED_ROOTS = (
@@ -43,6 +44,16 @@ PACKAGED_ROOTS = (
     "BeitAharonVeYisraelToOtzaria",
 )
 LIBRARY_DIR = ("ספרים", "אוצריא")
+
+# Sefaria books have no file in the packaged roots: the release build generates
+# them from Sefaria at build time (otzaria-library/CLAUDE.md). The only copy in
+# git is a frozen snapshot of that export under extraBooks/. The project owner
+# decided to accept that snapshot as the source for Sefaria books. It stands in
+# for the packaged root it replaces, so only roots LATER than that one can
+# shadow it.
+SNAPSHOT_ROOTS = {
+    "extraBooks/SefariaToOtzria/sefaria_export": "sefariaToOtzaria/sefaria_export",
+}
 
 
 def norm(s):
@@ -69,7 +80,10 @@ def repo_slug(value):
 def schema_origin_path_pattern():
     """The regex that schema/source.schema.json must carry for origin_path."""
     # '-' must stay unescaped: ECMA-262 with the 'u' flag rejects '\-' outside a class.
-    roots = "|".join(re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", root) for root in PACKAGED_ROOTS)
+    roots = "|".join(
+        re.sub(r"([.^$*+?{}\[\]\\|()])", r"\\\1", root)
+        for root in (*PACKAGED_ROOTS, *SNAPSHOT_ROOTS)
+    )
     return (
         r"^(?!.*\\)(?!.*//)(?!.*(?:^|/)\.{1,2}(?:/|$))"
         r"(?!.*(?:^|/)ספרים/אוצריא/(?:.*/)?ספרים/אוצריא/)"
@@ -94,9 +108,17 @@ def split_packaged_path(origin_path):
             below = path.parts[len(prefix):]
             break
     else:
+        for snapshot, stand_in in SNAPSHOT_ROOTS.items():
+            prefix = tuple(snapshot.split("/")) + LIBRARY_DIR
+            if path.parts[: len(prefix)] == prefix:
+                index, below = PACKAGED_ROOTS.index(stand_in), path.parts[len(prefix):]
+                break
+        else:
+            index = None
+    if index is None:
         raise ValueError(
             "origin_path must be <packaged source root>/ספרים/אוצריא/<category>/…; "
-            "extraBooks/, DictaToOtzaria/לא ערוך/ and ספרים/<not אוצריא>/ are not "
+            "extraBooks/ (except the Sefaria export snapshot), DictaToOtzaria/לא ערוך/ and ספרים/<not אוצריא>/ are not "
             f"part of the shipped library (packaged roots: {', '.join(PACKAGED_ROOTS)})"
         )
     if len(below) < 2:

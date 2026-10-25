@@ -64,6 +64,24 @@ class SourceSchemaPathTests(unittest.TestCase):
             self.assertRegex(path, self.pattern)
             self.assertEqual(library.source_category_from_path(path), "הלכה")
 
+    def test_sefaria_export_snapshot_is_accepted_and_stands_in_for_its_root(self):
+        # The upstream directory really is spelled "SefariaToOtzria".
+        path = "extraBooks/SefariaToOtzria/sefaria_export/ספרים/אוצריא/תלמוד בבלי/סדר מועד/תענית.txt"
+        self.assertRegex(path, self.pattern)
+        index, below = library.split_packaged_path(path)
+        self.assertEqual(library.PACKAGED_ROOTS[index], "sefariaToOtzaria/sefaria_export")
+        self.assertEqual(below, ("תלמוד בבלי", "סדר מועד", "תענית.txt"))
+        self.assertEqual(library.source_category_from_path(path), "תלמוד בבלי")
+
+    def test_other_extrabooks_paths_stay_rejected(self):
+        for path in (
+            "extraBooks/דיקטה/ספרים/אוצריא/הלכה/ספר.txt",
+            "extraBooks/SefariaToOtzria/sefaria_export/ספרים/לא ממויין/הלכה/ספר.txt",
+        ):
+            self.assertNotRegex(path, self.pattern)
+            with self.assertRaises(ValueError):
+                library.split_packaged_path(path)
+
     def test_unpackaged_roots_are_rejected_by_schema_and_code(self):
         for path in (
             "extraBooks/SefariaToOtzaria/sefaria_export/ספרים/אוצריא/משנה/ספר.txt",
